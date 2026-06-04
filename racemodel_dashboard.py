@@ -683,10 +683,10 @@ elif page == "🐴 Horse Profile":
             col1.metric("Total Runs", int(bsp_stats["runs"][0] or 0))
             col2.metric("Wins", int(bsp_stats["wins"][0] or 0))
             col3.metric("Places", int(bsp_stats["places"][0] or 0))
-            col4.metric("Place Rate", f"{bsp_stats['place_pct'][0] or 0}%")
-            col5.metric("Avg Win BSP", f"${bsp_stats['avg_win_bsp'][0] or 0}")
-            col6.metric("Best BSP", f"${bsp_stats['best_bsp'][0] or 0}")
-            col7.metric("Worst BSP", f"${bsp_stats['worst_bsp'][0] or 0}")
+            col4.metric("Place Rate", f"{float(bsp_stats['place_pct'][0] or 0)}%")
+            col5.metric("Avg Win BSP", f"${float(bsp_stats['avg_win_bsp'][0] or 0)}")
+            col6.metric("Best BSP", f"${float(bsp_stats['best_bsp'][0] or 0)}")
+            col7.metric("Worst BSP", f"${float(bsp_stats['worst_bsp'][0] or 0)}")
         else:
             st.markdown(f"### {horse_input}")
             st.info("No BSP history found in anz_thoroughbreds")
@@ -713,10 +713,13 @@ elif page == "🐴 Horse Profile":
         st.markdown("### 📈 Win BSP Over Time")
         if not bsp.empty and len(bsp) > 1:
             fig = go.Figure()
+            date_col = "LOCAL_MEETING_DATE" if "LOCAL_MEETING_DATE" in bsp.columns else "date"
+            win_col = "WIN_BSP" if "WIN_BSP" in bsp.columns else "win_bsp"
+            place_col = "PLACE_BSP" if "PLACE_BSP" in bsp.columns else "place_bsp"
             result_col = "WIN_RESULT" if "WIN_RESULT" in bsp.columns else "result"
             colors = ["#34d399" if r=="WINNER" else "#f87171" for r in bsp[result_col]]
             fig.add_trace(go.Scatter(
-                x=bsp["date"], y=bsp["win_bsp"],
+                x=bsp[date_col], y=bsp[win_col],
                 mode="lines+markers",
                 line=dict(color="#60a5fa", width=2),
                 marker=dict(size=10, color=colors,
@@ -724,9 +727,9 @@ elif page == "🐴 Horse Profile":
                 hovertemplate="<b>%{x}</b><br>BSP: $%{y}<extra></extra>"
             ))
             # Add place BSP line if available
-            if "place_bsp" in bsp.columns and bsp["place_bsp"].notna().any():
+            if place_col in bsp.columns and bsp[place_col].notna().any():
                 fig.add_trace(go.Scatter(
-                    x=bsp["date"], y=bsp["place_bsp"],
+                    x=bsp[date_col], y=bsp[place_col],
                     mode="lines",
                     line=dict(color="#fbbf24", width=1, dash="dot"),
                     name="Place BSP",
