@@ -96,7 +96,7 @@ def get_connection():
         if not token:
             st.error("⚠️ MOTHERDUCK_TOKEN not set. Add it in Streamlit Cloud → App settings → Secrets.")
             st.stop()
-        conn = duckdb.connect(f"md:my_db?motherduck_token={token}")
+        conn = duckdb.connect(f"md:my_db?motherduck_token={token}", config={'custom_user_agent': 'racemodel'})
         return conn
     except Exception as e:
         st.error(f"❌ Connection failed: {e}")
