@@ -564,7 +564,6 @@ elif page == "📁 Raw Data":
     st.markdown("## 📁 Raw Data")
 
     table = st.selectbox("Table", [
-        "daily_selections",
         "anz_thoroughbreds",
         "betfair_stream",
         "punting_form",
