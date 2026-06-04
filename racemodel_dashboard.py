@@ -86,15 +86,30 @@ st.markdown("""
 # ── Connection ────────────────────────────────────────────────────────────────
 @st.cache_resource
 def get_connection():
-    token = os.environ.get("MOTHERDUCK_TOKEN") or st.secrets.get("MOTHERDUCK_TOKEN", "")
-    if not token:
-        st.error("Set MOTHERDUCK_TOKEN environment variable")
+    try:
+        token = os.environ.get("MOTHERDUCK_TOKEN", "")
+        if not token:
+            try:
+                token = st.secrets["MOTHERDUCK_TOKEN"]
+            except:
+                pass
+        if not token:
+            st.error("⚠️ MOTHERDUCK_TOKEN not set. Add it in Streamlit Cloud → App settings → Secrets.")
+            st.stop()
+        conn = duckdb.connect(f"md:my_db?motherduck_token={token}")
+        return conn
+    except Exception as e:
+        st.error(f"❌ Connection failed: {e}")
         st.stop()
-    return duckdb.connect(f"md:my_db?motherduck_token={token}")
 
 @st.cache_data(ttl=300)
 def query(_conn, sql):
-    return _conn.execute(sql).df()
+    try:
+        return _conn.execute(sql).df()
+    except Exception as e:
+        st.warning(f"Query error: {e}")
+        import pandas as pd
+        return pd.DataFrame()
 
 conn = get_connection()
 
