@@ -659,10 +659,10 @@ elif page == "🐴 Horse Profile":
                 WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
                 UNION ALL
                 SELECT meeting_date, track, race_class,
-                       distance, barrier, weight, jockey,
-                       last10, neural_price, rated_run_style,
-                       soft_starts, soft_wins, heavy_starts, heavy_wins,
-                       place_pct, career_starts
+                       race_distance as distance, barrier, weight, jockey,
+                       horse_last10 as last10, NULL as neural_price, NULL as rated_run_style,
+                       NULL as soft_starts, NULL as soft_wins, NULL as heavy_starts, NULL as heavy_wins,
+                       NULL as place_pct, NULL as career_starts
                 FROM punting_form_history
                 WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
                 ORDER BY date DESC LIMIT 20
