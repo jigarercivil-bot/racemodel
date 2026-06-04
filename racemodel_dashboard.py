@@ -576,11 +576,18 @@ elif page == "🏇 Selections":
     df = query(conn, f"""
         SELECT race_date, race_number as r, course, horse, score, odds,
                confidence_tier as tier, going, field_size as field,
-               brain_check as verdict, brain_check_reason as reason,
-               finish_position as pos, place_result as placed,
-               win_result as won, place_bsp,
+               brain_check as verdict,
+               CASE 
+                   WHEN result_loaded = FALSE THEN '⏳ Pending'
+                   WHEN win_result = 1 THEN '🏆 WON'
+                   WHEN place_result = 1 THEN '✅ Placed'
+                   ELSE '❌ Unplaced'
+               END as outcome,
+               finish_position as pos,
+               ROUND(place_bsp,2) as place_bsp,
                ROUND(profit_loss,2) as pnl,
                ROUND(clv,1) as clv,
+               brain_check_reason as reason,
                s1_last_start as s1, s2_form as s2, s3_course_dist as s3,
                s4_bsp_ratio as s4, s5_draw as s5, s6_weight as s6,
                s7_jockey as s7, s8_trainer as s8, s9_resuming as s9,
