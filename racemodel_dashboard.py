@@ -710,7 +710,7 @@ elif page == "🐴 Horse Profile":
         st.markdown("---")
 
         # ── Block 2: Win BSP Over Time chart ─────────────────────────────────
-        st.markdown("### 📈 Win BSP Over Time")
+        st.markdown("### 📈 BSP Over Time (Win & Place)")
         if not bsp.empty and len(bsp) > 1:
             fig = go.Figure()
             date_col = "LOCAL_MEETING_DATE" if "LOCAL_MEETING_DATE" in bsp.columns else "date"
@@ -724,19 +724,24 @@ elif page == "🐴 Horse Profile":
                 line=dict(color="#60a5fa", width=2),
                 marker=dict(size=10, color=colors,
                     line=dict(color="#ffffff", width=1)),
-                hovertemplate="<b>%{x}</b><br>BSP: $%{y}<extra></extra>"
+                hovertemplate="<b>%{x}</b><br>Win BSP: $%{y}<extra></extra>",
+                name="Win BSP"
             ))
             # Add place BSP line if available
             if place_col in bsp.columns and bsp[place_col].notna().any():
                 fig.add_trace(go.Scatter(
                     x=bsp[date_col], y=bsp[place_col],
                     mode="lines",
-                    line=dict(color="#fbbf24", width=1, dash="dot"),
+                line=dict(color="#fbbf24", width=2),
+                mode="lines+markers",
+                marker=dict(size=6, color="#fbbf24", symbol="diamond"),
                     name="Place BSP",
                     hovertemplate="Place BSP: $%{y}<extra></extra>"
                 ))
             fig.update_layout(
                 paper_bgcolor="#16161e", plot_bgcolor="#16161e",
+                showlegend=True,
+                legend=dict(bgcolor="#16161e", font=dict(color="#9898b0", size=11)),
                 font=dict(color="#9898b0"), height=250,
                 margin=dict(l=0,r=0,t=10,b=0),
                 xaxis=dict(gridcolor="#2a2a38"),
