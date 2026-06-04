@@ -121,9 +121,6 @@ with st.sidebar:
     page = st.radio("Navigation", [
         "📊 Dashboard",
         "🏇 Selections",
-        "📡 Stream Data",
-        "📈 Signal ROI",
-        "🔍 Horse Lookup",
         "🐴 Horse Profile",
         "📁 Raw Data"
     ])
@@ -136,148 +133,188 @@ with st.sidebar:
 # PAGE 1 — DASHBOARD
 # ══════════════════════════════════════════════════════════════════
 if page == "📊 Dashboard":
-    st.markdown("## 📊 Performance Dashboard")
-    
-    # ── Top metrics ───────────────────────────────────────────────
+    st.markdown("## 📊 RACEMODEL Dashboard")
+
+    # ── Overall metrics ───────────────────────────────────────────────────────
     perf = query(conn, """
-        SELECT
-            COUNT(*) as total,
-            SUM(place_result) as placed,
-            SUM(win_result) as winners,
-            ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as place_pct,
-            ROUND(SUM(profit_loss),2) as pnl,
-            ROUND(AVG(profit_loss),2) as avg_pnl,
-            ROUND(AVG(clv),1) as avg_clv,
-            ROUND(AVG(odds),2) as avg_odds
-        FROM daily_selections
-        WHERE result_loaded = TRUE
+        SELECT COUNT(*) as total,
+               SUM(place_result) as placed,
+               SUM(win_result) as winners,
+               ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as place_pct,
+               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl,
+               ROUND(AVG(COALESCE(profit_loss,0)),2) as avg_pnl,
+               ROUND(AVG(clv),1) as avg_clv,
+               ROUND(AVG(odds),2) as avg_odds
+        FROM daily_selections WHERE result_loaded = TRUE
     """)
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        st.metric("Total Selections", int(perf['total'][0]))
-    with col2:
-        st.metric("Place Rate", f"{perf['place_pct'][0]}%")
-    with col3:
-        pnl = perf['pnl'][0] or 0
-        st.metric("Total P&L", f"{'+' if pnl>=0 else ''}{pnl}u")
-    with col4:
-        avg_clv = perf['avg_clv'][0]
-        st.metric("Avg CLV", f"{avg_clv:+.1f}%" if avg_clv else "N/A")
-    with col5:
-        st.metric("Avg Odds", f"${perf['avg_odds'][0]}")
+
+    col1,col2,col3,col4,col5 = st.columns(5)
+    if not perf.empty:
+        p = perf.iloc[0]
+        col1.metric("Total Bets", int(p.total or 0))
+        col2.metric("Place Rate", f"{p.place_pct or 0}%")
+        pnl = p.pnl or 0
+        col3.metric("Total P&L", f"{'+' if pnl>=0 else ''}{pnl}u")
+        col4.metric("Avg CLV", f"{p.avg_clv:+.1f}%" if p.avg_clv else "N/A")
+        col5.metric("Avg Odds", f"${p.avg_odds or 0}")
 
     st.markdown("---")
 
-    col_left, col_right = st.columns(2)
-    
+    # ── Row 1: P&L chart + Tier table ─────────────────────────────────────────
+    col_left, col_right = st.columns([3,2])
+
     with col_left:
-        # ── Cumulative P&L chart ──────────────────────────────────
         st.markdown("#### Cumulative P&L")
         pnl_data = query(conn, """
             SELECT race_date,
-                   ROUND(SUM(SUM(COALESCE(profit_loss,0))) OVER (ORDER BY race_date), 2) as cumulative_pnl,
+                   ROUND(SUM(SUM(COALESCE(profit_loss,0))) OVER (ORDER BY race_date),2) as cum_pnl,
                    COUNT(*) as bets,
-                   ROUND(SUM(place_result)*100.0/COUNT(*),1) as daily_place_pct
-            FROM daily_selections
-            WHERE result_loaded = TRUE
-            GROUP BY race_date
-            ORDER BY race_date
+                   ROUND(SUM(place_result)*100.0/COUNT(*),1) as strike
+            FROM daily_selections WHERE result_loaded=TRUE
+            GROUP BY race_date ORDER BY race_date
         """)
         if not pnl_data.empty:
             fig = go.Figure()
             fig.add_trace(go.Scatter(
-                x=pnl_data['race_date'], y=pnl_data['cumulative_pnl'],
-                mode='lines+markers', line=dict(color='#34d399', width=2),
-                marker=dict(size=6), fill='tozeroy',
-                fillcolor='rgba(52,211,153,0.1)'
+                x=pnl_data["race_date"], y=pnl_data["cum_pnl"],
+                mode="lines+markers", line=dict(color="#34d399",width=2),
+                marker=dict(size=6), fill="tozeroy",
+                fillcolor="rgba(52,211,153,0.08)"
             ))
-            fig.add_hline(y=0, line_dash="dash", line_color="#f87171", opacity=0.5)
+            fig.add_hline(y=0, line_dash="dash", line_color="#f87171", opacity=0.4)
             fig.update_layout(
-                paper_bgcolor='#16161e', plot_bgcolor='#16161e',
-                font=dict(color='#9898b0', size=11),
-                margin=dict(l=0,r=0,t=0,b=0), height=250,
-                xaxis=dict(gridcolor='#2a2a38', showgrid=True),
-                yaxis=dict(gridcolor='#2a2a38', showgrid=True, title="Units")
+                paper_bgcolor="#16161e", plot_bgcolor="#16161e",
+                font=dict(color="#9898b0",size=11),
+                margin=dict(l=0,r=0,t=0,b=0), height=220,
+                xaxis=dict(gridcolor="#2a2a38"),
+                yaxis=dict(gridcolor="#2a2a38",title="Units")
             )
             st.plotly_chart(fig, use_container_width=True)
-    
+
     with col_right:
-        # ── Tier breakdown ────────────────────────────────────────
-        st.markdown("#### Performance by Tier")
+        st.markdown("#### By Tier")
         tier_data = query(conn, """
             SELECT confidence_tier as tier,
                    COUNT(*) as bets,
-                   ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as place_pct,
-                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl,
-                   ROUND(AVG(clv),1) as avg_clv
+                   ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
+                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
             FROM daily_selections
-            WHERE result_loaded = TRUE AND confidence_tier IS NOT NULL
-            GROUP BY confidence_tier
-            ORDER BY CASE confidence_tier WHEN 'ELITE' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END
+            WHERE result_loaded=TRUE AND confidence_tier IS NOT NULL
+            GROUP BY 1 ORDER BY CASE confidence_tier WHEN 'ELITE' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END
         """)
         if not tier_data.empty:
             st.dataframe(tier_data, use_container_width=True, hide_index=True)
 
-    # ── Brain check impact ────────────────────────────────────────
-    st.markdown("#### Claude Impact Report")
-    bc_data = query(conn, """
-        SELECT brain_check as verdict,
-               COUNT(*) as bets,
-               SUM(place_result) as placed,
-               ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as place_pct,
-               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl,
-               ROUND(AVG(odds),2) as avg_odds
-        FROM daily_selections
-        WHERE result_loaded = TRUE AND brain_check IS NOT NULL
-        GROUP BY brain_check ORDER BY brain_check
-    """)
-    if not bc_data.empty:
-        col1, col2, col3 = st.columns(3)
-        for i, (col, row) in enumerate(zip([col1,col2,col3], bc_data.itertuples())):
-            with col:
-                emoji = "✅" if row.verdict=='BET' else ("⚠️" if row.verdict=='CAUTION' else "❌")
-                pnl_color = "green" if row.pnl >= 0 else "red"
+        st.markdown("#### By BSP Bucket")
+        bucket_data = query(conn, """
+            SELECT bsp_bucket as bucket,
+                   COUNT(*) as bets,
+                   ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
+                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
+            FROM daily_selections
+            WHERE result_loaded=TRUE AND bsp_bucket IS NOT NULL
+            GROUP BY 1 ORDER BY 1
+        """)
+        if not bucket_data.empty:
+            st.dataframe(bucket_data, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # ── Row 2: Claude Impact + Signal ROI ─────────────────────────────────────
+    col_left2, col_right2 = st.columns([2,3])
+
+    with col_left2:
+        st.markdown("#### Claude Impact Report")
+        bc_data = query(conn, """
+            SELECT brain_check as verdict,
+                   COUNT(*) as bets,
+                   ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
+                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl,
+                   ROUND(AVG(odds),2) as avg_odds
+            FROM daily_selections
+            WHERE result_loaded=TRUE AND brain_check IS NOT NULL
+            GROUP BY 1 ORDER BY 1
+        """)
+        if not bc_data.empty:
+            for _, row in bc_data.iterrows():
+                emoji = "✅" if row.verdict=="BET" else ("⚠️" if row.verdict=="CAUTION" else "❌")
+                pnl_col = "#34d399" if (row.pnl or 0)>=0 else "#f87171"
                 st.markdown(f"""
-                <div class="metric-card">
-                    <div style="display:flex;justify-content:space-between;margin-bottom:10px">
-                        <span style="font-weight:700;font-size:13px">{emoji} {row.verdict}</span>
-                        <span style="font-size:22px;font-weight:700">{row.bets}</span>
-                    </div>
-                    <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #2a2a38">
-                        <span style="font-size:11px;color:#6b6b80">Strike Rate</span>
-                        <span style="font-size:12px;font-weight:600">{row.place_pct}%</span>
-                    </div>
-                    <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #2a2a38">
-                        <span style="font-size:11px;color:#6b6b80">P&L</span>
-                        <span style="font-size:12px;font-weight:600;color:{'#34d399' if row.pnl>=0 else '#f87171'}">{'+' if row.pnl>=0 else ''}{row.pnl}u</span>
-                    </div>
-                    <div style="display:flex;justify-content:space-between;padding:4px 0">
-                        <span style="font-size:11px;color:#6b6b80">Avg Odds</span>
-                        <span style="font-size:12px;font-weight:600">${row.avg_odds}</span>
-                    </div>
+                <div style="background:#16161e;border:1px solid #2a2a38;border-radius:8px;padding:10px 14px;margin-bottom:8px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                  <span style="font-weight:700;font-size:12px">{emoji} {row.verdict}</span>
+                  <span style="font-size:18px;font-weight:700;color:#fff">{int(row.bets)}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:#9898b0">
+                  <span>Strike: <b style="color:#fff">{row.strike}%</b></span>
+                  <span>P&L: <b style="color:{pnl_col}">{'+' if (row.pnl or 0)>=0 else ''}{row.pnl}u</b></span>
+                  <span>Odds: <b style="color:#fff">${row.avg_odds}</b></span>
+                </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-    # ── Daily P&L table ───────────────────────────────────────────
-    st.markdown("#### Daily Results")
-    daily = query(conn, """
-        SELECT race_date as date,
-               COUNT(*) as selections,
-               ROUND(SUM(place_result)*100.0/COUNT(*),1) as place_pct,
-               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
-        FROM daily_selections
-        WHERE result_loaded = TRUE
-        GROUP BY race_date
-        ORDER BY race_date DESC
-        LIMIT 30
-    """)
-    st.dataframe(daily, use_container_width=True, hide_index=True)
+    with col_right2:
+        st.markdown("#### Signal Strike Rate")
+        sig_data = query(conn, """
+            SELECT 'S1 Last Start' as sig, ROUND(AVG(CASE WHEN s1_last_start>0 THEN place_result END)*100,1) as pct, SUM(CASE WHEN s1_last_start>0 THEN 1 ELSE 0 END) as fired FROM daily_selections WHERE result_loaded=TRUE
+            UNION ALL SELECT 'S2 Form Last 3', ROUND(AVG(CASE WHEN s2_form>0 THEN place_result END)*100,1), SUM(CASE WHEN s2_form>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+            UNION ALL SELECT 'S3 Course+Dist', ROUND(AVG(CASE WHEN s3_course_dist>0 THEN place_result END)*100,1), SUM(CASE WHEN s3_course_dist>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+            UNION ALL SELECT 'S4 BSP Ratio', ROUND(AVG(CASE WHEN s4_bsp_ratio>0 THEN place_result END)*100,1), SUM(CASE WHEN s4_bsp_ratio>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+            UNION ALL SELECT 'S12 Race Shape', ROUND(AVG(CASE WHEN s12_race_shape>0 THEN place_result END)*100,1), SUM(CASE WHEN s12_race_shape>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+            UNION ALL SELECT 'S14 Going', ROUND(AVG(CASE WHEN s14_going>0 THEN place_result END)*100,1), SUM(CASE WHEN s14_going>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+            UNION ALL SELECT 'S18 Place Rate', ROUND(AVG(CASE WHEN s18_place_rate>0 THEN place_result END)*100,1), SUM(CASE WHEN s18_place_rate>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+            UNION ALL SELECT 'S19 Dist Form', ROUND(AVG(CASE WHEN s19_dist_form>0 THEN place_result END)*100,1), SUM(CASE WHEN s19_dist_form>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+            ORDER BY pct DESC NULLS LAST
+        """)
+        if not sig_data.empty:
+            fig2 = go.Figure(go.Bar(
+                x=sig_data["pct"], y=sig_data["sig"],
+                orientation="h",
+                marker_color="#60a5fa",
+                text=[f"{int(f)} fired" for f in sig_data["fired"]],
+                textposition="outside"
+            ))
+            fig2.update_layout(
+                paper_bgcolor="#16161e", plot_bgcolor="#16161e",
+                font=dict(color="#9898b0",size=11),
+                margin=dict(l=0,r=60,t=0,b=0), height=260,
+                xaxis=dict(gridcolor="#2a2a38", range=[0,110], title="Place %"),
+                yaxis=dict(gridcolor="#2a2a38")
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+
+    st.markdown("---")
+
+    # ── Row 3: Top venues + Daily results ─────────────────────────────────────
+    col_left3, col_right3 = st.columns([2,3])
+
+    with col_left3:
+        st.markdown("#### Top Venues (≥3 bets)")
+        venue_data = query(conn, """
+            SELECT course as venue, COUNT(*) as bets,
+                   ROUND(SUM(place_result)*100.0/COUNT(*),1) as strike,
+                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
+            FROM daily_selections
+            WHERE result_loaded=TRUE
+            GROUP BY course HAVING COUNT(*)>=3
+            ORDER BY pnl DESC LIMIT 10
+        """)
+        if not venue_data.empty:
+            st.dataframe(venue_data, use_container_width=True, hide_index=True)
+
+    with col_right3:
+        st.markdown("#### Daily Results")
+        daily = query(conn, """
+            SELECT race_date as date, COUNT(*) as bets,
+                   ROUND(SUM(place_result)*100.0/COUNT(*),1) as strike,
+                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
+            FROM daily_selections WHERE result_loaded=TRUE
+            GROUP BY race_date ORDER BY race_date DESC LIMIT 20
+        """)
+        if not daily.empty:
+            st.dataframe(daily, use_container_width=True, hide_index=True, height=280)
 
 
-# ══════════════════════════════════════════════════════════════════
-# PAGE 2 — SELECTIONS
-# ══════════════════════════════════════════════════════════════════
 elif page == "🏇 Selections":
     st.markdown("## 🏇 Daily Selections")
     
@@ -334,365 +371,183 @@ elif page == "🏇 Selections":
 # ══════════════════════════════════════════════════════════════════
 # PAGE 3 — STREAM DATA
 # ══════════════════════════════════════════════════════════════════
-elif page == "📡 Stream Data":
-    st.markdown("## 📡 Betfair Stream Data")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        stream_date = st.date_input("Date", value=date(2026, 4, 1))
-    with col2:
-        track_filter = st.text_input("Track (optional)", "")
-
-    track_sql = f"AND LOWER(track) LIKE '%{track_filter.lower()}%'" if track_filter else ""
-
-    stream_df = query(conn, f"""
-        SELECT meeting_date as date, track, race_name as race,
-               horse_name as horse, barrier, field_size as field,
-               bsp_rank as rank,
-               ROUND(win_bsp,2) as win_bsp,
-               ROUND(place_bsp,2) as place_bsp,
-               ROUND(price_30min,2) as p30min,
-               ROUND(price_10min,2) as p10min,
-               ROUND(price_1min,2) as p1min,
-               ROUND(steam_pct_30to_bsp,1) as steam_30,
-               ROUND(steam_pct_10to_bsp,1) as steam_10,
-               ROUND(steam_pct_1to_bsp,1) as steam_1,
-               ROUND(price_high,2) as p_high,
-               ROUND(price_low,2) as p_low,
-               num_price_updates as updates,
-               price_direction_changes as dir_changes,
-               win_result, place_result, scratched
-        FROM betfair_stream
-        WHERE meeting_date = '{stream_date}'
-        {track_sql}
-        AND scratched = FALSE
-        ORDER BY track, race_name, bsp_rank
-    """)
-
-    if not stream_df.empty:
-        st.markdown(f"**{len(stream_df)} runners** on {stream_date}")
-        st.download_button("⬇️ Export to CSV", stream_df.to_csv(index=False), "stream_data.csv", "text/csv")
-        st.dataframe(stream_df, use_container_width=True, hide_index=True, height=600)
-
-        # Steam distribution
-        st.markdown("#### Steam Distribution (10min to BSP)")
-        steam_clean = stream_df[stream_df['steam_10'].notna() & stream_df['win_bsp'].notna()]
-        if not steam_clean.empty:
-            fig = px.histogram(steam_clean, x='steam_10', nbins=40,
-                              color_discrete_sequence=['#60a5fa'])
-            fig.update_layout(
-                paper_bgcolor='#16161e', plot_bgcolor='#16161e',
-                font=dict(color='#9898b0'), height=200,
-                margin=dict(l=0,r=0,t=0,b=0),
-                xaxis_title="Steam % (positive = shortened)",
-                yaxis_title="Count"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info(f"No stream data for {stream_date}")
-
-    # Summary stats
-    st.markdown("#### Stream Data Summary")
-    summary = query(conn, """
-        SELECT YEAR(meeting_date) as year,
-               MONTHNAME(meeting_date) as month,
-               COUNT(DISTINCT meeting_date) as days,
-               COUNT(*) as runners,
-               SUM(CASE WHEN win_bsp IS NOT NULL THEN 1 ELSE 0 END) as has_win_bsp,
-               SUM(CASE WHEN place_bsp IS NOT NULL THEN 1 ELSE 0 END) as has_place_bsp,
-               SUM(CASE WHEN price_10min IS NOT NULL THEN 1 ELSE 0 END) as has_steam
-        FROM betfair_stream
-        GROUP BY 1, 2, MONTH(meeting_date)
-        ORDER BY 1, MONTH(meeting_date)
-    """)
-    st.dataframe(summary, use_container_width=True, hide_index=True)
-
-
-# ══════════════════════════════════════════════════════════════════
-# PAGE 4 — SIGNAL ROI
-# ══════════════════════════════════════════════════════════════════
-elif page == "📈 Signal ROI":
-    st.markdown("## 📈 Signal Strike Rate")
-
-    signal_data = query(conn, """
-        SELECT
-            'S1 Last Start'   as signal, AVG(CASE WHEN s1_last_start  > 0 THEN place_result END)*100 as place_pct, SUM(CASE WHEN s1_last_start  > 0 THEN 1 ELSE 0 END) as fired
-        FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S2 Form Last 3', AVG(CASE WHEN s2_form > 0 THEN place_result END)*100, SUM(CASE WHEN s2_form > 0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S3 Course+Dist', AVG(CASE WHEN s3_course_dist > 0 THEN place_result END)*100, SUM(CASE WHEN s3_course_dist > 0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S4 BSP Ratio', AVG(CASE WHEN s4_bsp_ratio > 0 THEN place_result END)*100, SUM(CASE WHEN s4_bsp_ratio > 0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S12 Race Shape', AVG(CASE WHEN s12_race_shape > 0 THEN place_result END)*100, SUM(CASE WHEN s12_race_shape > 0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S14 Going', AVG(CASE WHEN s14_going > 0 THEN place_result END)*100, SUM(CASE WHEN s14_going > 0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S18 Place Rate', AVG(CASE WHEN s18_place_rate > 0 THEN place_result END)*100, SUM(CASE WHEN s18_place_rate > 0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S19 Dist Form', AVG(CASE WHEN s19_dist_form > 0 THEN place_result END)*100, SUM(CASE WHEN s19_dist_form > 0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        ORDER BY place_pct DESC
-    """)
-
-    if not signal_data.empty:
-        signal_data['place_pct'] = signal_data['place_pct'].round(1)
-        fig = px.bar(signal_data, x='place_pct', y='signal', orientation='h',
-                    color='place_pct', color_continuous_scale='Teal',
-                    text='fired')
-        fig.update_traces(texttemplate='%{text} fired', textposition='outside')
-        fig.update_layout(
-            paper_bgcolor='#16161e', plot_bgcolor='#16161e',
-            font=dict(color='#9898b0'), height=350,
-            margin=dict(l=0,r=80,t=0,b=0),
-            xaxis_title="Place % when signal fired",
-            yaxis_title="", coloraxis_showscale=False
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(signal_data, use_container_width=True, hide_index=True)
-
-
-# ══════════════════════════════════════════════════════════════════
-# PAGE 5 — HORSE LOOKUP
-# ══════════════════════════════════════════════════════════════════
-elif page == "🔍 Horse Lookup":
-    st.markdown("## 🔍 Horse Lookup")
-    st.markdown("Search a horse name across all data sources")
-
-    horse_name = st.text_input("Horse name", placeholder="e.g. Presides")
-
-    if horse_name and len(horse_name) >= 2:
-        tabs = st.tabs(["📋 Selections", "📊 BSP History", "📡 Stream", "📝 Form"])
-
-        with tabs[0]:
-            sel = query(conn, f"""
-                SELECT race_date, course, race_number as race, score, odds,
-                       confidence_tier as tier, going, brain_check as verdict,
-                       finish_position as pos, place_result as placed,
-                       ROUND(profit_loss,2) as pnl, ROUND(clv,1) as clv,
-                       signals_hit
-                FROM daily_selections
-                WHERE LOWER(horse) LIKE LOWER('%{horse_name}%')
-                ORDER BY race_date DESC
-            """)
-            st.markdown(f"**{len(sel)} pipeline selections**")
-            if not sel.empty:
-                st.dataframe(sel, use_container_width=True, hide_index=True)
-            else:
-                st.info("No pipeline selections found")
-
-        with tabs[1]:
-            bsp = query(conn, f"""
-                SELECT LOCAL_MEETING_DATE as date, TRACK as track,
-                       WIN_MARKET_NAME as race,
-                       ROUND(WIN_BSP,2) as win_bsp,
-                       ROUND(PLACE_BSP,2) as place_bsp,
-                       WIN_RESULT as result, PLACE_RESULT as placed,
-                       ROUND(WIN_BSP_VOLUME,0) as volume,
-                       DISTANCE as distance
-                FROM anz_thoroughbreds
-                WHERE LOWER(SELECTION_NAME) LIKE LOWER('%{horse_name}%')
-                ORDER BY LOCAL_MEETING_DATE DESC
-                LIMIT 50
-            """)
-            st.markdown(f"**{len(bsp)} BSP runs** (PROMO data)")
-            if not bsp.empty:
-                place_rate = round(bsp['placed'].eq('WINNER').sum() / len(bsp) * 100, 1)
-                win_rate = round(bsp['result'].eq('WINNER').sum() / len(bsp) * 100, 1)
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Runs", len(bsp))
-                col2.metric("Place Rate", f"{place_rate}%")
-                col3.metric("Win Rate", f"{win_rate}%")
-                st.dataframe(bsp, use_container_width=True, hide_index=True)
-            else:
-                st.info("No BSP history found")
-
-        with tabs[2]:
-            stream = query(conn, f"""
-                SELECT meeting_date as date, track, race_name as race,
-                       ROUND(win_bsp,2) as win_bsp,
-                       ROUND(place_bsp,2) as place_bsp,
-                       bsp_rank as rank, field_size as field,
-                       ROUND(price_10min,2) as p10min,
-                       ROUND(steam_pct_10to_bsp,1) as steam_10,
-                       ROUND(steam_pct_1to_bsp,1) as steam_1,
-                       price_direction_changes as dir_changes,
-                       win_result, place_result
-                FROM betfair_stream
-                WHERE LOWER(horse_name) LIKE LOWER('%{horse_name}%')
-                ORDER BY meeting_date DESC
-                LIMIT 50
-            """)
-            st.markdown(f"**{len(stream)} stream runs**")
-            if not stream.empty:
-                st.dataframe(stream, use_container_width=True, hide_index=True)
-            else:
-                st.info("No stream data found")
-
-        with tabs[3]:
-            form = query(conn, f"""
-                SELECT meeting_date as date, track, race_number as race,
-                       race_class as class, distance,
-                       barrier, weight, jockey, trainer,
-                       last10, prep_runs,
-                       soft_starts, soft_wins, heavy_starts, heavy_wins,
-                       neural_price, rated_run_style as style,
-                       place_pct, career_starts
-                FROM punting_form
-                WHERE LOWER(horse_name) LIKE LOWER('%{horse_name}%')
-                ORDER BY meeting_date DESC
-                LIMIT 20
-            """)
-            st.markdown(f"**{len(form)} form entries**")
-            if not form.empty:
-                st.dataframe(form, use_container_width=True, hide_index=True)
-            else:
-                st.info("No punting form found")
-
-
-# ══════════════════════════════════════════════════════════════════
-# PAGE 6 — RAW DATA
-# ══════════════════════════════════════════════════════════════════
-
 elif page == "🐴 Horse Profile":
     st.markdown("## 🐴 Horse Profile")
-    st.markdown("All data from every source in one window")
 
-    horse_input = st.text_input("Horse name", placeholder="e.g. Presides")
+    horse_input = st.text_input("Search horse name", placeholder="e.g. Presides")
 
     if horse_input and len(horse_input) >= 2:
         h = horse_input.replace("'", "")
-        st.markdown(f"### {horse_input}")
 
-        # Key stats row
+        # ── Key stats ─────────────────────────────────────────────────────────
         bsp_stats = query(conn, f"""
             SELECT COUNT(*) as runs,
                    SUM(CASE WHEN WIN_RESULT='WINNER' THEN 1 ELSE 0 END) as wins,
                    SUM(CASE WHEN PLACE_RESULT='WINNER' THEN 1 ELSE 0 END) as places,
+                   ROUND(SUM(CASE WHEN PLACE_RESULT='WINNER' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1) as place_pct,
                    ROUND(AVG(WIN_BSP),2) as avg_win_bsp,
-                   ROUND(AVG(PLACE_BSP),2) as avg_place_bsp
+                   ROUND(MIN(WIN_BSP),2) as best_bsp,
+                   ROUND(MAX(WIN_BSP),2) as worst_bsp
             FROM anz_thoroughbreds
             WHERE LOWER(REPLACE(SELECTION_NAME,chr(39),'')) LIKE LOWER('%{h}%')
         """)
 
-        sel_stats = query(conn, f"""
-            SELECT COUNT(*) as selections,
-                   SUM(place_result) as placed,
-                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl,
-                   ROUND(AVG(score),1) as avg_score
-            FROM daily_selections
-            WHERE LOWER(REPLACE(horse,chr(39),'')) LIKE LOWER('%{h}%')
-            AND result_loaded = TRUE
-        """)
-
-        col1,col2,col3,col4,col5 = st.columns(5)
-        if not bsp_stats.empty:
-            col1.metric("Total Runs", int(bsp_stats['runs'][0] or 0))
-            col2.metric("Wins", int(bsp_stats['wins'][0] or 0))
-            col3.metric("Places", int(bsp_stats['places'][0] or 0))
-            col4.metric("Avg Win BSP", f"${bsp_stats['avg_win_bsp'][0] or 0}")
-        if not sel_stats.empty and (sel_stats['selections'][0] or 0) > 0:
-            pnl = sel_stats['pnl'][0] or 0
-            col5.metric("Pipeline P&L", f"{'+' if pnl>=0 else ''}{pnl}u")
+        if not bsp_stats.empty and (bsp_stats["runs"][0] or 0) > 0:
+            st.markdown(f"### {horse_input}")
+            col1,col2,col3,col4,col5,col6,col7 = st.columns(7)
+            col1.metric("Total Runs", int(bsp_stats["runs"][0] or 0))
+            col2.metric("Wins", int(bsp_stats["wins"][0] or 0))
+            col3.metric("Places", int(bsp_stats["places"][0] or 0))
+            col4.metric("Place Rate", f"{bsp_stats['place_pct'][0] or 0}%")
+            col5.metric("Avg Win BSP", f"${bsp_stats['avg_win_bsp'][0] or 0}")
+            col6.metric("Best BSP", f"${bsp_stats['best_bsp'][0] or 0}")
+            col7.metric("Worst BSP", f"${bsp_stats['worst_bsp'][0] or 0}")
+        else:
+            st.markdown(f"### {horse_input}")
+            st.info("No BSP history found in anz_thoroughbreds")
 
         st.markdown("---")
 
-        # BSP + Pipeline side by side
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.markdown("**📊 BSP History (PROMO)**")
-            bsp = query(conn, f"""
-                SELECT LOCAL_MEETING_DATE as date, TRACK as track,
-                       WIN_MARKET_NAME as race,
-                       ROUND(WIN_BSP,2) as win_bsp,
-                       ROUND(PLACE_BSP,2) as place_bsp,
-                       WIN_RESULT as result, PLACE_RESULT as placed
-                FROM anz_thoroughbreds
-                WHERE LOWER(REPLACE(SELECTION_NAME,chr(39),'')) LIKE LOWER('%{h}%')
-                ORDER BY LOCAL_MEETING_DATE DESC LIMIT 30
-            """)
-            if not bsp.empty:
-                st.dataframe(bsp, use_container_width=True, hide_index=True, height=280)
-            else:
-                st.info("No BSP history")
+        # ── Block 1: BSP History ──────────────────────────────────────────────
+        st.markdown("### 📊 BSP History")
+        bsp = query(conn, f"""
+            SELECT *
+            FROM anz_thoroughbreds
+            WHERE LOWER(REPLACE(SELECTION_NAME,chr(39),'')) LIKE LOWER('%{h}%')
+            ORDER BY LOCAL_MEETING_DATE DESC
+            LIMIT 50
+        """)
+        if not bsp.empty:
+            st.dataframe(bsp, use_container_width=True, hide_index=True, height=300)
+            st.download_button("⬇️ Export BSP History", bsp.to_csv(index=False), f"{h}_bsp.csv", "text/csv")
+        else:
+            st.info("No BSP history found")
 
-        with col_b:
-            st.markdown("**🏇 Pipeline Selections**")
-            pipe = query(conn, f"""
-                SELECT race_date as date, course, race_number as r,
-                       score, odds, confidence_tier as tier,
-                       brain_check as verdict, going,
-                       finish_position as pos, place_result as placed,
-                       ROUND(profit_loss,2) as pnl
-                FROM daily_selections
-                WHERE LOWER(REPLACE(horse,chr(39),'')) LIKE LOWER('%{h}%')
-                ORDER BY race_date DESC
-            """)
-            if not pipe.empty:
-                st.dataframe(pipe, use_container_width=True, hide_index=True, height=280)
-            else:
-                st.info("Not in pipeline")
+        st.markdown("---")
 
-        # Stream + Form side by side
-        col_c, col_d = st.columns(2)
-        with col_c:
-            st.markdown("**📡 Stream Data**")
-            stream = query(conn, f"""
-                SELECT meeting_date as date, track, race_name as race,
-                       ROUND(win_bsp,2) as win_bsp,
-                       ROUND(place_bsp,2) as place_bsp,
-                       bsp_rank as rank, field_size as field,
-                       ROUND(price_10min,2) as p10min,
-                       ROUND(steam_pct_10to_bsp,1) as steam_10,
-                       win_result, place_result
-                FROM betfair_stream
-                WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
-                ORDER BY meeting_date DESC LIMIT 20
-            """)
-            if not stream.empty:
-                st.dataframe(stream, use_container_width=True, hide_index=True, height=280)
-            else:
-                st.info("No stream data")
-
-        with col_d:
-            st.markdown("**📝 Punting Form (today + history)**")
-            form = query(conn, f"""
-                SELECT meeting_date as date, track, race_class as class,
-                       distance, barrier, weight, jockey,
-                       last10, neural_price, rated_run_style as style,
-                       soft_starts, soft_wins, heavy_starts, heavy_wins,
-                       place_pct, career_starts
-                FROM punting_form
-                WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
-                UNION ALL
-                SELECT meeting_date, track, race_class,
-                       race_distance as distance, barrier, weight, jockey,
-                       horse_last10 as last10, NULL as neural_price, NULL as rated_run_style,
-                       NULL as soft_starts, NULL as soft_wins, NULL as heavy_starts, NULL as heavy_wins,
-                       NULL as place_pct, NULL as career_starts
-                FROM punting_form_history
-                WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
-                ORDER BY date DESC LIMIT 20
-            """)
-            if not form.empty:
-                st.dataframe(form, use_container_width=True, hide_index=True, height=280)
-            else:
-                st.info("No form data — punting_form_history grows daily via Dropbox")
-
-        # BSP price chart
-        if not bsp.empty and len(bsp) > 2:
-            st.markdown("**📈 Win BSP Over Time**")
+        # ── Block 2: Win BSP Over Time chart ─────────────────────────────────
+        st.markdown("### 📈 Win BSP Over Time")
+        if not bsp.empty and len(bsp) > 1:
             fig = go.Figure()
-            colors = ['#34d399' if r=='WINNER' else '#f87171' for r in bsp['result']]
+            colors = ["#34d399" if r=="WINNER" else "#f87171" for r in bsp["result"]]
             fig.add_trace(go.Scatter(
-                x=bsp['date'], y=bsp['win_bsp'],
-                mode='lines+markers',
-                line=dict(color='#60a5fa', width=2),
-                marker=dict(size=8, color=colors)
+                x=bsp["date"], y=bsp["win_bsp"],
+                mode="lines+markers",
+                line=dict(color="#60a5fa", width=2),
+                marker=dict(size=10, color=colors,
+                    line=dict(color="#ffffff", width=1)),
+                hovertemplate="<b>%{x}</b><br>BSP: $%{y}<extra></extra>"
             ))
+            # Add place BSP line if available
+            if "place_bsp" in bsp.columns and bsp["place_bsp"].notna().any():
+                fig.add_trace(go.Scatter(
+                    x=bsp["date"], y=bsp["place_bsp"],
+                    mode="lines",
+                    line=dict(color="#fbbf24", width=1, dash="dot"),
+                    name="Place BSP",
+                    hovertemplate="Place BSP: $%{y}<extra></extra>"
+                ))
             fig.update_layout(
-                paper_bgcolor='#16161e', plot_bgcolor='#16161e',
-                font=dict(color='#9898b0'), height=200,
+                paper_bgcolor="#16161e", plot_bgcolor="#16161e",
+                font=dict(color="#9898b0"), height=250,
                 margin=dict(l=0,r=0,t=10,b=0),
-                xaxis=dict(gridcolor='#2a2a38'),
-                yaxis=dict(gridcolor='#2a2a38', title="Win BSP")
+                xaxis=dict(gridcolor="#2a2a38"),
+                yaxis=dict(gridcolor="#2a2a38", title="BSP ($)"),
+                legend=dict(bgcolor="#16161e"),
+                annotations=[dict(
+                    x=0.01, y=0.95, xref="paper", yref="paper",
+                    text="🟢 Win  🔴 Loss", showarrow=False,
+                    font=dict(color="#9898b0", size=11)
+                )]
             )
             st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Not enough data for chart")
+
+        st.markdown("---")
+
+        # ── Block 3: Punting Form ─────────────────────────────────────────────
+        st.markdown("### 📝 Punting Form")
+
+        # Today + history combined
+        form = query(conn, f"""
+            SELECT *
+            FROM punting_form
+            WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
+            ORDER BY meeting_date DESC LIMIT 10
+        """)
+
+        if not form.empty:
+            # Show records summary if available
+            rec_query = query(conn, f"""
+                SELECT career_record, dist_record, track_record,
+                       track_dist_record, soft_record, heavy_record,
+                       first_up_record, second_up_record,
+                       horse_age, horse_sire, horse_dam
+                FROM punting_form_history
+                WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
+                ORDER BY meeting_date DESC LIMIT 1
+            """)
+            if not rec_query.empty:
+                r = rec_query.iloc[0]
+                col1,col2,col3,col4 = st.columns(4)
+                col1.metric("Career", r.get("career_record") or "—")
+                col2.metric("Dist", r.get("dist_record") or "—")
+                col3.metric("Soft", r.get("soft_record") or "—")
+                col4.metric("Heavy", r.get("heavy_record") or "—")
+                col1b,col2b,col3b,col4b = st.columns(4)
+                col1b.metric("Track", r.get("track_record") or "—")
+                col2b.metric("T+D", r.get("track_dist_record") or "—")
+                col3b.metric("1st up", r.get("first_up_record") or "—")
+                col4b.metric("2nd up", r.get("second_up_record") or "—")
+                st.markdown(f"**Age:** {r.get('horse_age') or '—'} | **Sire:** {r.get('horse_sire') or '—'} | **Dam:** {r.get('horse_dam') or '—'}")
+            st.markdown("**Today's form:**")
+            st.dataframe(form, use_container_width=True, hide_index=True, height=250)
+        else:
+            st.info("No punting form for today")
+
+        # Punting form history - all columns
+        pf_hist = query(conn, f"""
+            SELECT *
+            FROM punting_form_history
+            WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
+            ORDER BY meeting_date DESC LIMIT 50
+        """)
+        if not pf_hist.empty:
+            st.markdown("**Form history (Dropbox CSV):**")
+            st.dataframe(pf_hist, use_container_width=True, hide_index=True, height=300)
+            st.download_button("⬇️ Export Form History", pf_hist.to_csv(index=False), f"{h}_form.csv", "text/csv")
+        else:
+            st.info("No form history yet — grows daily via Dropbox")
+
+        st.markdown("---")
+
+        # ── Block 4: Stream Data ──────────────────────────────────────────────
+        st.markdown("### 📡 Stream Data")
+        stream = query(conn, f"""
+            SELECT *
+            FROM betfair_stream
+            WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
+            ORDER BY meeting_date DESC
+            LIMIT 30
+        """)
+        if not stream.empty:
+            # Steam summary
+            steamers = stream[stream["steam_10"].notna() & (stream["steam_10"] > 15)]
+            drifters = stream[stream["steam_10"].notna() & (stream["steam_10"] < -15)]
+            col1,col2,col3 = st.columns(3)
+            col1.metric("Stream Runs", len(stream))
+            col2.metric("Steam >15%", len(steamers))
+            col3.metric("Drift >15%", len(drifters))
+            st.dataframe(stream, use_container_width=True, hide_index=True, height=300)
+            st.download_button("⬇️ Export Stream", stream.to_csv(index=False), f"{h}_stream.csv", "text/csv")
+        else:
+            st.info("No stream data found — load more months to expand coverage")
+
     else:
-        st.info("👆 Enter a horse name to see all data in one window")
+        st.markdown("### 👆 Enter a horse name above")
+        st.info("Search any horse to see all available data: BSP history, punting form, stream data and price chart — all in one place.")
+
 
 elif page == "📁 Raw Data":
     st.markdown("## 📁 Raw Data")
