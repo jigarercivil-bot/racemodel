@@ -680,7 +680,7 @@ elif page == "🐴 Horse Profile":
             result_col = "WIN_RESULT" if "WIN_RESULT" in bsp.columns else "result"
             colors = ["#34d399" if r=="WINNER" else "#f87171" for r in bsp[result_col]]
             fig.add_trace(go.Scatter(
-                x=bsp["date"], y=bsp["win_bsp"],
+                x=bsp["LOCAL_MEETING_DATE"], y=bsp["WIN_BSP"],
                 mode="lines+markers",
                 line=dict(color="#60a5fa", width=2),
                 marker=dict(size=10, color=colors,
