@@ -133,186 +133,415 @@ with st.sidebar:
 # PAGE 1 — DASHBOARD
 # ══════════════════════════════════════════════════════════════════
 if page == "📊 Dashboard":
-    st.markdown("## 📊 RACEMODEL Dashboard")
 
-    # ── Overall metrics ───────────────────────────────────────────────────────
+    # ── Fetch all data ────────────────────────────────────────────────────────
     perf = query(conn, """
-        SELECT COUNT(*) as total,
-               SUM(place_result) as placed,
+        SELECT COUNT(*) as total, SUM(place_result) as placed,
                SUM(win_result) as winners,
                ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as place_pct,
                ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl,
-               ROUND(AVG(COALESCE(profit_loss,0)),2) as avg_pnl,
                ROUND(AVG(clv),1) as avg_clv,
                ROUND(AVG(odds),2) as avg_odds
-        FROM daily_selections WHERE result_loaded = TRUE
+        FROM daily_selections WHERE result_loaded=TRUE
     """)
 
-    col1,col2,col3,col4,col5 = st.columns(5)
-    if not perf.empty:
-        p = perf.iloc[0]
-        col1.metric("Total Bets", int(p.total or 0))
-        col2.metric("Place Rate", f"{p.place_pct or 0}%")
-        pnl = p.pnl or 0
-        col3.metric("Total P&L", f"{'+' if pnl>=0 else ''}{pnl}u")
-        col4.metric("Avg CLV", f"{p.avg_clv:+.1f}%" if p.avg_clv else "N/A")
-        col5.metric("Avg Odds", f"${p.avg_odds or 0}")
+    pnl_data = query(conn, """
+        SELECT race_date,
+               ROUND(SUM(SUM(COALESCE(profit_loss,0))) OVER (ORDER BY race_date),2) as cum_pnl,
+               COUNT(*) as bets,
+               ROUND(SUM(place_result)*100.0/COUNT(*),1) as strike
+        FROM daily_selections WHERE result_loaded=TRUE
+        GROUP BY race_date ORDER BY race_date
+    """)
 
-    st.markdown("---")
+    tier_data = query(conn, """
+        SELECT confidence_tier as tier, COUNT(*) as bets,
+               ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
+               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
+        FROM daily_selections WHERE result_loaded=TRUE AND confidence_tier IS NOT NULL
+        GROUP BY 1 ORDER BY CASE confidence_tier WHEN 'ELITE' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END
+    """)
 
-    # ── Row 1: P&L chart + Tier table ─────────────────────────────────────────
-    col_left, col_right = st.columns([3,2])
+    bc_data = query(conn, """
+        SELECT brain_check as verdict, COUNT(*) as bets,
+               ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
+               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
+        FROM daily_selections WHERE result_loaded=TRUE AND brain_check IS NOT NULL
+        GROUP BY 1 ORDER BY 1
+    """)
 
-    with col_left:
-        st.markdown("#### Cumulative P&L")
-        pnl_data = query(conn, """
-            SELECT race_date,
-                   ROUND(SUM(SUM(COALESCE(profit_loss,0))) OVER (ORDER BY race_date),2) as cum_pnl,
-                   COUNT(*) as bets,
-                   ROUND(SUM(place_result)*100.0/COUNT(*),1) as strike
-            FROM daily_selections WHERE result_loaded=TRUE
-            GROUP BY race_date ORDER BY race_date
-        """)
+    sig_data = query(conn, """
+        SELECT 'S1' as sig, ROUND(AVG(CASE WHEN s1_last_start>0 THEN place_result END)*100,1) as pct, SUM(CASE WHEN s1_last_start>0 THEN 1 ELSE 0 END) as fired FROM daily_selections WHERE result_loaded=TRUE
+        UNION ALL SELECT 'S2', ROUND(AVG(CASE WHEN s2_form>0 THEN place_result END)*100,1), SUM(CASE WHEN s2_form>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+        UNION ALL SELECT 'S3', ROUND(AVG(CASE WHEN s3_course_dist>0 THEN place_result END)*100,1), SUM(CASE WHEN s3_course_dist>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+        UNION ALL SELECT 'S4', ROUND(AVG(CASE WHEN s4_bsp_ratio>0 THEN place_result END)*100,1), SUM(CASE WHEN s4_bsp_ratio>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+        UNION ALL SELECT 'S12', ROUND(AVG(CASE WHEN s12_race_shape>0 THEN place_result END)*100,1), SUM(CASE WHEN s12_race_shape>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+        UNION ALL SELECT 'S14', ROUND(AVG(CASE WHEN s14_going>0 THEN place_result END)*100,1), SUM(CASE WHEN s14_going>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+        UNION ALL SELECT 'S18', ROUND(AVG(CASE WHEN s18_place_rate>0 THEN place_result END)*100,1), SUM(CASE WHEN s18_place_rate>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+        UNION ALL SELECT 'S19', ROUND(AVG(CASE WHEN s19_dist_form>0 THEN place_result END)*100,1), SUM(CASE WHEN s19_dist_form>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
+        ORDER BY pct DESC NULLS LAST
+    """)
+
+    venue_data = query(conn, """
+        SELECT course as venue, COUNT(*) as bets,
+               ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
+               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
+        FROM daily_selections WHERE result_loaded=TRUE
+        GROUP BY course HAVING COUNT(*)>=3
+        ORDER BY pnl DESC LIMIT 8
+    """)
+
+    daily = query(conn, """
+        SELECT race_date as date, COUNT(*) as bets,
+               ROUND(SUM(place_result)*100.0/COUNT(*),1) as strike,
+               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
+        FROM daily_selections WHERE result_loaded=TRUE
+        GROUP BY race_date ORDER BY race_date DESC LIMIT 14
+    """)
+
+    # ── Extract values ────────────────────────────────────────────────────────
+    p = perf.iloc[0] if not perf.empty else None
+    total = int(p.total or 0) if p is not None else 0
+    placed = int(p.placed or 0) if p is not None else 0
+    winners = int(p.winners or 0) if p is not None else 0
+    place_pct = float(p.place_pct or 0) if p is not None else 0
+    pnl_total = float(p.pnl or 0) if p is not None else 0
+    avg_clv = float(p.avg_clv or 0) if p is not None else 0
+    avg_odds = float(p.avg_odds or 0) if p is not None else 0
+    latest_cum = float(pnl_data["cum_pnl"].iloc[-1]) if not pnl_data.empty else 0
+
+    pnl_color = "#10b981" if pnl_total >= 0 else "#ef4444"
+    pnl_arrow = "▲" if pnl_total >= 0 else "▼"
+
+    # ── Header banner ─────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    .rm-header {{
+        background: linear-gradient(135deg, #0a0a12 0%, #0f1729 50%, #0a0a12 100%);
+        border: 1px solid #1e3a5f;
+        border-radius: 16px;
+        padding: 28px 32px;
+        margin-bottom: 24px;
+        position: relative;
+        overflow: hidden;
+    }}
+    .rm-header::before {{
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -10%;
+        width: 400px;
+        height: 400px;
+        background: radial-gradient(circle, rgba(16,185,129,0.06) 0%, transparent 70%);
+        pointer-events: none;
+    }}
+    .rm-title {{
+        font-family: 'Syne', sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.25em;
+        color: #10b981;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+    }}
+    .rm-subtitle {{
+        font-family: 'Syne', sans-serif;
+        font-size: 28px;
+        font-weight: 800;
+        color: #f0f0f8;
+        margin-bottom: 20px;
+    }}
+    .rm-kpi-row {{
+        display: flex;
+        gap: 32px;
+        flex-wrap: wrap;
+    }}
+    .rm-kpi {{
+        display: flex;
+        flex-direction: column;
+    }}
+    .rm-kpi-label {{
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 2px;
+    }}
+    .rm-kpi-value {{
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 22px;
+        font-weight: 500;
+        color: #f0f0f8;
+    }}
+    .rm-kpi-value.green {{ color: #10b981; }}
+    .rm-kpi-value.red {{ color: #ef4444; }}
+
+    .rm-section {{
+        font-family: 'Syne', sans-serif;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: #4b5563;
+        margin: 20px 0 12px 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }}
+    .rm-section::after {{
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: #1f2937;
+    }}
+
+    .rm-bc-card {{
+        background: #0d1117;
+        border-radius: 12px;
+        padding: 16px 18px;
+        border: 1px solid #1f2937;
+        margin-bottom: 10px;
+        transition: border-color 0.2s;
+    }}
+    .rm-bc-card:hover {{ border-color: #374151; }}
+    .rm-bc-card.bet {{ border-left: 3px solid #10b981; }}
+    .rm-bc-card.caution {{ border-left: 3px solid #f59e0b; }}
+    .rm-bc-card.skip {{ border-left: 3px solid #ef4444; }}
+    .rm-bc-top {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    }}
+    .rm-bc-label {{ font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px; }}
+    .rm-bc-count {{ font-family: 'JetBrains Mono', monospace; font-size: 24px; font-weight: 500; color: #f0f0f8; }}
+    .rm-bc-stats {{
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 4px;
+    }}
+    .rm-bc-stat {{ text-align: center; }}
+    .rm-bc-stat-val {{ font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 500; }}
+    .rm-bc-stat-lbl {{ font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.08em; }}
+    </style>
+
+    <div class="rm-header">
+        <div class="rm-title">🏇 RACEMODEL v3</div>
+        <div class="rm-subtitle">Australian Thoroughbred Place Betting</div>
+        <div class="rm-kpi-row">
+            <div class="rm-kpi">
+                <div class="rm-kpi-label">Total Bets</div>
+                <div class="rm-kpi-value">{total}</div>
+            </div>
+            <div class="rm-kpi">
+                <div class="rm-kpi-label">Place Rate</div>
+                <div class="rm-kpi-value {'green' if place_pct >= 50 else 'red'}">{place_pct}%</div>
+            </div>
+            <div class="rm-kpi">
+                <div class="rm-kpi-label">Total P&L</div>
+                <div class="rm-kpi-value {'green' if pnl_total >= 0 else 'red'}">{pnl_arrow} {abs(pnl_total):.2f}u</div>
+            </div>
+            <div class="rm-kpi">
+                <div class="rm-kpi-label">Avg CLV</div>
+                <div class="rm-kpi-value {'green' if avg_clv >= 0 else 'red'}">{avg_clv:+.1f}%</div>
+            </div>
+            <div class="rm-kpi">
+                <div class="rm-kpi-label">Avg Odds</div>
+                <div class="rm-kpi-value">${avg_odds}</div>
+            </div>
+            <div class="rm-kpi">
+                <div class="rm-kpi-label">Winners</div>
+                <div class="rm-kpi-value">{winners}</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Row 1: P&L Chart + Tier breakdown ─────────────────────────────────────
+    st.markdown('<div class="rm-section">📈 Cumulative Performance</div>', unsafe_allow_html=True)
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
         if not pnl_data.empty:
             fig = go.Figure()
+            # Area fill
             fig.add_trace(go.Scatter(
                 x=pnl_data["race_date"], y=pnl_data["cum_pnl"],
-                mode="lines+markers", line=dict(color="#34d399",width=2),
-                marker=dict(size=6), fill="tozeroy",
-                fillcolor="rgba(52,211,153,0.08)"
+                mode="lines", line=dict(color="rgba(16,185,129,0)", width=0),
+                fill="tozeroy", fillcolor="rgba(16,185,129,0.06)",
+                showlegend=False, hoverinfo="skip"
             ))
-            fig.add_hline(y=0, line_dash="dash", line_color="#f87171", opacity=0.4)
+            # Main line
+            fig.add_trace(go.Scatter(
+                x=pnl_data["race_date"], y=pnl_data["cum_pnl"],
+                mode="lines+markers",
+                line=dict(color="#10b981", width=2.5),
+                marker=dict(
+                    size=[10 if i == len(pnl_data)-1 else 5 for i in range(len(pnl_data))],
+                    color=["#10b981" if v >= 0 else "#ef4444" for v in pnl_data["cum_pnl"]],
+                    line=dict(color="#0d1117", width=2)
+                ),
+                customdata=pnl_data[["bets","strike"]].values,
+                hovertemplate="<b>%{x}</b><br>P&L: %{y:+.2f}u<br>Bets: %{customdata[0]}<br>Strike: %{customdata[1]}%<extra></extra>"
+            ))
+            fig.add_hline(y=0, line_dash="dot", line_color="#374151", opacity=0.8)
             fig.update_layout(
-                paper_bgcolor="#16161e", plot_bgcolor="#16161e",
-                font=dict(color="#9898b0",size=11),
+                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                font=dict(color="#9ca3af", family="JetBrains Mono", size=10),
                 margin=dict(l=0,r=0,t=0,b=0), height=220,
-                xaxis=dict(gridcolor="#2a2a38"),
-                yaxis=dict(gridcolor="#2a2a38",title="Units")
+                xaxis=dict(gridcolor="#1f2937", showgrid=True, zeroline=False),
+                yaxis=dict(gridcolor="#1f2937", showgrid=True, zeroline=False, title="Units"),
+                showlegend=False,
+                hoverlabel=dict(bgcolor="#1f2937", bordercolor="#374151", font_color="#f0f0f8")
             )
             st.plotly_chart(fig, use_container_width=True)
 
-    with col_right:
-        st.markdown("#### By Tier")
-        tier_data = query(conn, """
-            SELECT confidence_tier as tier,
-                   COUNT(*) as bets,
-                   ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
-                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
-            FROM daily_selections
-            WHERE result_loaded=TRUE AND confidence_tier IS NOT NULL
-            GROUP BY 1 ORDER BY CASE confidence_tier WHEN 'ELITE' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END
-        """)
+    with col2:
         if not tier_data.empty:
-            st.dataframe(tier_data, use_container_width=True, hide_index=True)
-
-        st.markdown("#### By BSP Bucket")
-        bucket_data = query(conn, """
-            SELECT bsp_bucket as bucket,
-                   COUNT(*) as bets,
-                   ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
-                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
-            FROM daily_selections
-            WHERE result_loaded=TRUE AND bsp_bucket IS NOT NULL
-            GROUP BY 1 ORDER BY 1
-        """)
-        if not bucket_data.empty:
-            st.dataframe(bucket_data, use_container_width=True, hide_index=True)
-
-    st.markdown("---")
-
-    # ── Row 2: Claude Impact + Signal ROI ─────────────────────────────────────
-    col_left2, col_right2 = st.columns([2,3])
-
-    with col_left2:
-        st.markdown("#### Claude Impact Report")
-        bc_data = query(conn, """
-            SELECT brain_check as verdict,
-                   COUNT(*) as bets,
-                   ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
-                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl,
-                   ROUND(AVG(odds),2) as avg_odds
-            FROM daily_selections
-            WHERE result_loaded=TRUE AND brain_check IS NOT NULL
-            GROUP BY 1 ORDER BY 1
-        """)
-        if not bc_data.empty:
-            for _, row in bc_data.iterrows():
-                emoji = "✅" if row.verdict=="BET" else ("⚠️" if row.verdict=="CAUTION" else "❌")
-                pnl_col = "#34d399" if (row.pnl or 0)>=0 else "#f87171"
+            for _, row in tier_data.iterrows():
+                emoji = "💎" if row.tier=="ELITE" else ("⭐" if row.tier=="MEDIUM" else "📌")
+                pnl_c = "#10b981" if (row.pnl or 0)>=0 else "#ef4444"
                 st.markdown(f"""
-                <div style="background:#16161e;border:1px solid #2a2a38;border-radius:8px;padding:10px 14px;margin-bottom:8px">
-                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-                  <span style="font-weight:700;font-size:12px">{emoji} {row.verdict}</span>
-                  <span style="font-size:18px;font-weight:700;color:#fff">{int(row.bets)}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;font-size:11px;color:#9898b0">
-                  <span>Strike: <b style="color:#fff">{row.strike}%</b></span>
-                  <span>P&L: <b style="color:{pnl_col}">{'+' if (row.pnl or 0)>=0 else ''}{row.pnl}u</b></span>
-                  <span>Odds: <b style="color:#fff">${row.avg_odds}</b></span>
+                <div style="background:#0d1117;border:1px solid #1f2937;border-radius:10px;padding:12px;margin-bottom:8px">
+                <div style="font-family:'Syne',sans-serif;font-size:12px;font-weight:700;color:#f0f0f8;margin-bottom:8px">{emoji} {row.tier}</div>
+                <div style="display:flex;justify-content:space-between;font-size:10px;color:#9ca3af;font-family:'JetBrains Mono',monospace">
+                  <div><div style="font-size:14px;color:#f0f0f8;font-weight:500">{int(row.bets)}</div>bets</div>
+                  <div><div style="font-size:14px;color:#60a5fa;font-weight:500">{row.strike}%</div>strike</div>
+                  <div><div style="font-size:14px;color:{pnl_c};font-weight:500">{'+' if (row.pnl or 0)>=0 else ''}{row.pnl}u</div>p&l</div>
                 </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-    with col_right2:
-        st.markdown("#### Signal Strike Rate")
-        sig_data = query(conn, """
-            SELECT 'S1 Last Start' as sig, ROUND(AVG(CASE WHEN s1_last_start>0 THEN place_result END)*100,1) as pct, SUM(CASE WHEN s1_last_start>0 THEN 1 ELSE 0 END) as fired FROM daily_selections WHERE result_loaded=TRUE
-            UNION ALL SELECT 'S2 Form Last 3', ROUND(AVG(CASE WHEN s2_form>0 THEN place_result END)*100,1), SUM(CASE WHEN s2_form>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-            UNION ALL SELECT 'S3 Course+Dist', ROUND(AVG(CASE WHEN s3_course_dist>0 THEN place_result END)*100,1), SUM(CASE WHEN s3_course_dist>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-            UNION ALL SELECT 'S4 BSP Ratio', ROUND(AVG(CASE WHEN s4_bsp_ratio>0 THEN place_result END)*100,1), SUM(CASE WHEN s4_bsp_ratio>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-            UNION ALL SELECT 'S12 Race Shape', ROUND(AVG(CASE WHEN s12_race_shape>0 THEN place_result END)*100,1), SUM(CASE WHEN s12_race_shape>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-            UNION ALL SELECT 'S14 Going', ROUND(AVG(CASE WHEN s14_going>0 THEN place_result END)*100,1), SUM(CASE WHEN s14_going>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-            UNION ALL SELECT 'S18 Place Rate', ROUND(AVG(CASE WHEN s18_place_rate>0 THEN place_result END)*100,1), SUM(CASE WHEN s18_place_rate>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-            UNION ALL SELECT 'S19 Dist Form', ROUND(AVG(CASE WHEN s19_dist_form>0 THEN place_result END)*100,1), SUM(CASE WHEN s19_dist_form>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-            ORDER BY pct DESC NULLS LAST
-        """)
+    # ── Row 2: Signal radar + Claude Impact ───────────────────────────────────
+    st.markdown('<div class="rm-section">🎯 Signal Analysis & Brain Check</div>', unsafe_allow_html=True)
+    col3, col4 = st.columns([2, 1])
+
+    with col3:
         if not sig_data.empty:
-            fig2 = go.Figure(go.Bar(
-                x=sig_data["pct"], y=sig_data["sig"],
-                orientation="h",
-                marker_color="#60a5fa",
-                text=[f"{int(f)} fired" for f in sig_data["fired"]],
-                textposition="outside"
+            sig_clean = sig_data.dropna(subset=["pct"])
+            fig2 = go.Figure()
+            colors = ["#10b981" if v >= 55 else "#f59e0b" if v >= 45 else "#ef4444" for v in sig_clean["pct"]]
+            fig2.add_trace(go.Bar(
+                x=sig_clean["sig"], y=sig_clean["pct"],
+                marker_color=colors,
+                marker_line_width=0,
+                text=[f"{v:.0f}%" for v in sig_clean["pct"]],
+                textposition="outside",
+                textfont=dict(family="JetBrains Mono", size=11, color="#9ca3af"),
+                customdata=sig_clean["fired"].values,
+                hovertemplate="<b>%{x}</b><br>Strike: %{y:.1f}%<br>Fired: %{customdata}x<extra></extra>"
             ))
+            fig2.add_hline(y=50, line_dash="dot", line_color="#374151", opacity=0.6,
+                          annotation_text="50%", annotation_font_color="#4b5563")
             fig2.update_layout(
-                paper_bgcolor="#16161e", plot_bgcolor="#16161e",
-                font=dict(color="#9898b0",size=11),
-                margin=dict(l=0,r=60,t=0,b=0), height=260,
-                xaxis=dict(gridcolor="#2a2a38", range=[0,110], title="Place %"),
-                yaxis=dict(gridcolor="#2a2a38")
+                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                font=dict(color="#9ca3af", family="JetBrains Mono", size=10),
+                margin=dict(l=0,r=0,t=20,b=0), height=220,
+                xaxis=dict(gridcolor="#1f2937", showgrid=False),
+                yaxis=dict(gridcolor="#1f2937", showgrid=True, range=[0,110], title="Place %"),
+                bargap=0.3,
+                hoverlabel=dict(bgcolor="#1f2937", bordercolor="#374151", font_color="#f0f0f8")
             )
             st.plotly_chart(fig2, use_container_width=True)
 
-    st.markdown("---")
+    with col4:
+        if not bc_data.empty:
+            for _, row in bc_data.iterrows():
+                emoji = "✅" if row.verdict=="BET" else ("⚠️" if row.verdict=="CAUTION" else "❌")
+                card_class = row.verdict.lower()
+                pnl_c = "#10b981" if (row.pnl or 0)>=0 else "#ef4444"
+                border_c = "#10b981" if row.verdict=="BET" else "#f59e0b" if row.verdict=="CAUTION" else "#ef4444"
+                st.markdown(f"""
+                <div style="background:#0d1117;border:1px solid #1f2937;border-left:3px solid {border_c};border-radius:10px;padding:14px 16px;margin-bottom:8px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                  <span style="font-family:'Syne',sans-serif;font-weight:700;font-size:12px;color:#f0f0f8">{emoji} {row.verdict}</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:500;color:#f0f0f8">{int(row.bets)}</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-family:'JetBrains Mono',monospace;font-size:10px">
+                  <div style="color:#9ca3af">Strike<br><span style="font-size:14px;color:#60a5fa">{row.strike}%</span></div>
+                  <div style="color:#9ca3af">P&L<br><span style="font-size:14px;color:{pnl_c}">{'+' if (row.pnl or 0)>=0 else ''}{row.pnl}u</span></div>
+                </div>
+                </div>
+                """, unsafe_allow_html=True)
 
-    # ── Row 3: Top venues + Daily results ─────────────────────────────────────
-    col_left3, col_right3 = st.columns([2,3])
+    # ── Row 3: Venues + Daily results ─────────────────────────────────────────
+    st.markdown('<div class="rm-section">🏟️ Venues & Daily Log</div>', unsafe_allow_html=True)
+    col5, col6 = st.columns([2, 3])
 
-    with col_left3:
-        st.markdown("#### Top Venues (≥3 bets)")
-        venue_data = query(conn, """
-            SELECT course as venue, COUNT(*) as bets,
-                   ROUND(SUM(place_result)*100.0/COUNT(*),1) as strike,
-                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
-            FROM daily_selections
-            WHERE result_loaded=TRUE
-            GROUP BY course HAVING COUNT(*)>=3
-            ORDER BY pnl DESC LIMIT 10
-        """)
+    with col5:
         if not venue_data.empty:
-            st.dataframe(venue_data, use_container_width=True, hide_index=True)
+            fig3 = go.Figure()
+            venue_colors = ["#10b981" if v>=0 else "#ef4444" for v in venue_data["pnl"]]
+            fig3.add_trace(go.Bar(
+                y=venue_data["venue"], x=venue_data["pnl"],
+                orientation="h",
+                marker_color=venue_colors,
+                marker_line_width=0,
+                text=[f"{'+' if v>=0 else ''}{v}u" for v in venue_data["pnl"]],
+                textposition="outside",
+                textfont=dict(family="JetBrains Mono", size=10, color="#9ca3af"),
+                customdata=venue_data[["bets","strike"]].values,
+                hovertemplate="<b>%{y}</b><br>P&L: %{x:+.2f}u<br>Bets: %{customdata[0]}<br>Strike: %{customdata[1]}%<extra></extra>"
+            ))
+            fig3.update_layout(
+                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                font=dict(color="#9ca3af", family="JetBrains Mono", size=10),
+                margin=dict(l=0,r=60,t=0,b=0), height=280,
+                xaxis=dict(gridcolor="#1f2937", zeroline=True, zerolinecolor="#374151"),
+                yaxis=dict(gridcolor="#1f2937", showgrid=False),
+                hoverlabel=dict(bgcolor="#1f2937", bordercolor="#374151", font_color="#f0f0f8")
+            )
+            st.plotly_chart(fig3, use_container_width=True)
 
-    with col_right3:
-        st.markdown("#### Daily Results")
-        daily = query(conn, """
-            SELECT race_date as date, COUNT(*) as bets,
-                   ROUND(SUM(place_result)*100.0/COUNT(*),1) as strike,
-                   ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
-            FROM daily_selections WHERE result_loaded=TRUE
-            GROUP BY race_date ORDER BY race_date DESC LIMIT 20
-        """)
+    with col6:
         if not daily.empty:
-            st.dataframe(daily, use_container_width=True, hide_index=True, height=280)
+            # Interactive daily table with color coding
+            fig4 = go.Figure(data=[go.Table(
+                columnwidth=[120, 60, 80, 80],
+                header=dict(
+                    values=["<b>Date</b>", "<b>Bets</b>", "<b>Strike</b>", "<b>P&L</b>"],
+                    fill_color="#161b22",
+                    font=dict(color="#9ca3af", family="JetBrains Mono", size=11),
+                    line_color="#30363d",
+                    align="left",
+                    height=32
+                ),
+                cells=dict(
+                    values=[
+                        daily["date"].astype(str).tolist(),
+                        daily["bets"].tolist(),
+                        [f"{v}%" for v in daily["strike"].tolist()],
+                        [f"{'+' if v>=0 else ''}{v}u" for v in daily["pnl"].tolist()]
+                    ],
+                    fill_color=[
+                        ["#0d1117"] * len(daily),
+                        ["#0d1117"] * len(daily),
+                        ["rgba(16,185,129,0.1)" if v>=50 else "rgba(239,68,68,0.1)" for v in daily["strike"].tolist()],
+                        ["rgba(16,185,129,0.1)" if v>=0 else "rgba(239,68,68,0.1)" for v in daily["pnl"].tolist()]
+                    ],
+                    font=dict(
+                        color=[
+                            ["#d1d5db"] * len(daily),
+                            ["#d1d5db"] * len(daily),
+                            ["#10b981" if v>=50 else "#ef4444" for v in daily["strike"].tolist()],
+                            ["#10b981" if v>=0 else "#ef4444" for v in daily["pnl"].tolist()]
+                        ],
+                        family="JetBrains Mono", size=11
+                    ),
+                    line_color="#1f2937",
+                    align="left",
+                    height=28
+                )
+            )])
+            fig4.update_layout(
+                paper_bgcolor="#0d1117",
+                margin=dict(l=0,r=0,t=0,b=0),
+                height=280
+            )
+            st.plotly_chart(fig4, use_container_width=True)
 
 
 elif page == "🏇 Selections":
