@@ -317,12 +317,22 @@ if page == "📊 Dashboard":
 
 elif page == "🏇 Selections":
     st.markdown("## 🏇 Daily Selections")
-    
+
+    # Hide today's unresulted selections until 7pm AEST (9am UTC)
+    from datetime import datetime, timezone, timedelta as td
+    aest_now = datetime.now(timezone.utc) + td(hours=10)
+    cutoff_hour = 19  # 7pm AEST
+    show_today = aest_now.hour >= cutoff_hour
+    max_date = date.today() if show_today else date.today() - timedelta(days=1)
+
+    if not show_today:
+        st.info(f"⏰ Today's selections visible after 7pm AEST ({cutoff_hour - aest_now.hour}hrs remaining). Showing completed results only.")
+
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         date_from = st.date_input("From", value=date.today() - timedelta(days=14))
     with col2:
-        date_to = st.date_input("To", value=date.today())
+        date_to = st.date_input("To", value=max_date)
     with col3:
         tier_filter = st.multiselect("Tier", ["ELITE","MEDIUM","LOW"], default=["ELITE","MEDIUM","LOW"])
     with col4:
@@ -330,6 +340,9 @@ elif page == "🏇 Selections":
 
     tier_sql = "','".join(tier_filter) if tier_filter else "ELITE','MEDIUM','LOW"
     bc_sql = "','".join(bc_filter) if bc_filter else "BET','CAUTION','SKIP"
+
+    # Only show result_loaded rows for today if before 7pm AEST
+    result_filter = "AND (race_date < CURRENT_DATE OR result_loaded = TRUE)" if not show_today else ""
 
     df = query(conn, f"""
         SELECT race_date, race_number as r, course, horse, score, odds,
@@ -349,6 +362,7 @@ elif page == "🏇 Selections":
         FROM daily_selections
         WHERE race_date BETWEEN '{date_from}' AND '{date_to}'
         AND confidence_tier IN ('{tier_sql}')
+        {result_filter}
         ORDER BY race_date DESC, score DESC
     """)
 
@@ -361,7 +375,6 @@ elif page == "🏇 Selections":
 
         # Export button
         csv = df.to_csv(index=False)
-        st.download_button("⬇️ Export to CSV", csv, "racemodel_selections.csv", "text/csv")
 
         st.dataframe(df, use_container_width=True, hide_index=True, height=600)
     else:
@@ -419,7 +432,6 @@ elif page == "🐴 Horse Profile":
         """)
         if not bsp.empty:
             st.dataframe(bsp, use_container_width=True, hide_index=True, height=300)
-            st.download_button("⬇️ Export BSP History", bsp.to_csv(index=False), f"{h}_bsp.csv", "text/csv")
         else:
             st.info("No BSP history found")
 
@@ -429,7 +441,8 @@ elif page == "🐴 Horse Profile":
         st.markdown("### 📈 Win BSP Over Time")
         if not bsp.empty and len(bsp) > 1:
             fig = go.Figure()
-            colors = ["#34d399" if r=="WINNER" else "#f87171" for r in bsp["result"]]
+            result_col = "WIN_RESULT" if "WIN_RESULT" in bsp.columns else "result"
+            colors = ["#34d399" if r=="WINNER" else "#f87171" for r in bsp[result_col]]
             fig.add_trace(go.Scatter(
                 x=bsp["date"], y=bsp["win_bsp"],
                 mode="lines+markers",
@@ -516,7 +529,6 @@ elif page == "🐴 Horse Profile":
         if not pf_hist.empty:
             st.markdown("**Form history (Dropbox CSV):**")
             st.dataframe(pf_hist, use_container_width=True, hide_index=True, height=300)
-            st.download_button("⬇️ Export Form History", pf_hist.to_csv(index=False), f"{h}_form.csv", "text/csv")
         else:
             st.info("No form history yet — grows daily via Dropbox")
 
@@ -540,7 +552,6 @@ elif page == "🐴 Horse Profile":
             col2.metric("Steam >15%", len(steamers))
             col3.metric("Drift >15%", len(drifters))
             st.dataframe(stream, use_container_width=True, hide_index=True, height=300)
-            st.download_button("⬇️ Export Stream", stream.to_csv(index=False), f"{h}_stream.csv", "text/csv")
         else:
             st.info("No stream data found — load more months to expand coverage")
 
@@ -594,5 +605,4 @@ elif page == "📁 Raw Data":
         show_cols = st.multiselect("Columns to display", all_cols, default=all_cols, key="raw_cols")
         if show_cols:
             df = df[show_cols]
-    st.download_button("⬇️ Export CSV", df.to_csv(index=False), f"{table}.csv", "text/csv")
     st.dataframe(df, use_container_width=True, hide_index=True, height=600)
