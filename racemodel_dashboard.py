@@ -745,7 +745,6 @@ elif page == "🐴 Horse Profile":
                 margin=dict(l=0,r=0,t=10,b=0),
                 xaxis=dict(gridcolor="#2a2a38"),
                 yaxis=dict(gridcolor="#2a2a38", title="BSP ($)"),
-                legend=dict(bgcolor="#16161e"),
                 annotations=[dict(
                     x=0.01, y=0.95, xref="paper", yref="paper",
                     text="🟢 Win  🔴 Loss", showarrow=False,
