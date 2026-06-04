@@ -648,7 +648,7 @@ elif page == "🐴 Horse Profile":
                 st.info("No stream data")
 
         with col_d:
-            st.markdown("**📝 Punting Form**")
+            st.markdown("**📝 Punting Form (today + history)**")
             form = query(conn, f"""
                 SELECT meeting_date as date, track, race_class as class,
                        distance, barrier, weight, jockey,
@@ -657,12 +657,20 @@ elif page == "🐴 Horse Profile":
                        place_pct, career_starts
                 FROM punting_form
                 WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
-                ORDER BY meeting_date DESC LIMIT 10
+                UNION ALL
+                SELECT meeting_date, track, race_class,
+                       distance, barrier, weight, jockey,
+                       last10, neural_price, rated_run_style,
+                       soft_starts, soft_wins, heavy_starts, heavy_wins,
+                       place_pct, career_starts
+                FROM punting_form_history
+                WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
+                ORDER BY date DESC LIMIT 20
             """)
             if not form.empty:
                 st.dataframe(form, use_container_width=True, hide_index=True, height=280)
             else:
-                st.info("No form data")
+                st.info("No form data — punting_form_history grows daily via Dropbox")
 
         # BSP price chart
         if not bsp.empty and len(bsp) > 2:
