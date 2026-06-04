@@ -73,6 +73,20 @@ st.markdown("""
         color: #60a5fa !important;
     }
     
+    /* Disable text selection on horse profile data */
+    .no-select {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+    }
+    /* Disable selection on all dataframes in horse profile */
+    [data-testid="stDataFrame"] {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        user-select: none;
+    }
+
     .search-result {
         background: #16161e;
         border: 1px solid #2a2a38;
