@@ -607,6 +607,42 @@ elif page == "🏇 Selections":
         if bc_filter:
             df = df[df['verdict'].isin(bc_filter)]
 
+        # Additional column filters
+        st.markdown("**Additional Filters**")
+        fcol1, fcol2, fcol3, fcol4, fcol5 = st.columns(5)
+
+        with fcol1:
+            outcome_filter = st.multiselect("Outcome", 
+                ["🏆 WON","✅ Placed","❌ Unplaced","⏳ Pending"],
+                default=["🏆 WON","✅ Placed","❌ Unplaced","⏳ Pending"],
+                key="outcome_f")
+            if outcome_filter:
+                df = df[df['outcome'].isin(outcome_filter)]
+
+        with fcol2:
+            if 'course' in df.columns:
+                venues = sorted(df['course'].dropna().unique().tolist())
+                venue_sel = st.multiselect("Venue", venues, default=venues, key="venue_f")
+                if venue_sel:
+                    df = df[df['course'].isin(venue_sel)]
+
+        with fcol3:
+            if 'going' in df.columns:
+                goings = sorted(df['going'].dropna().unique().tolist())
+                going_sel = st.multiselect("Going", goings, default=goings, key="going_f")
+                if going_sel:
+                    df = df[df['going'].isin(going_sel)]
+
+        with fcol4:
+            min_score = st.number_input("Min Score", min_value=0, max_value=25, value=0, key="score_f")
+            if min_score > 0:
+                df = df[df['score'] >= min_score]
+
+        with fcol5:
+            horse_search = st.text_input("Horse name", placeholder="Search...", key="horse_f")
+            if horse_search:
+                df = df[df['horse'].str.lower().str.contains(horse_search.lower(), na=False)]
+
         st.markdown(f"**{len(df)} selections**")
 
         # Export button
@@ -680,7 +716,7 @@ elif page == "🐴 Horse Profile":
             result_col = "WIN_RESULT" if "WIN_RESULT" in bsp.columns else "result"
             colors = ["#34d399" if r=="WINNER" else "#f87171" for r in bsp[result_col]]
             fig.add_trace(go.Scatter(
-                x=bsp["LOCAL_MEETING_DATE"], y=bsp["WIN_BSP"],
+                x=bsp["date"], y=bsp["win_bsp"],
                 mode="lines+markers",
                 line=dict(color="#60a5fa", width=2),
                 marker=dict(size=10, color=colors,
@@ -780,9 +816,13 @@ elif page == "🐴 Horse Profile":
             LIMIT 30
         """)
         if not stream.empty:
-            # Steam summary
-            steamers = stream[stream["steam_10"].notna() & (stream["steam_10"] > 15)]
-            drifters = stream[stream["steam_10"].notna() & (stream["steam_10"] < -15)]
+            # Steam summary — use actual column name from SELECT *
+            steam_col = "steam_pct_10to_bsp" if "steam_pct_10to_bsp" in stream.columns else "steam_10"
+            if steam_col in stream.columns:
+                steamers = stream[stream[steam_col].notna() & (stream[steam_col] > 15)]
+                drifters = stream[stream[steam_col].notna() & (stream[steam_col] < -15)]
+            else:
+                steamers = drifters = stream.iloc[0:0]
             col1,col2,col3 = st.columns(3)
             col1.metric("Stream Runs", len(stream))
             col2.metric("Steam >15%", len(steamers))
