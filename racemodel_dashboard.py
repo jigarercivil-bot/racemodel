@@ -731,10 +731,9 @@ elif page == "🐴 Horse Profile":
             if place_col in bsp.columns and bsp[place_col].notna().any():
                 fig.add_trace(go.Scatter(
                     x=bsp[date_col], y=bsp[place_col],
-                    mode="lines",
-                line=dict(color="#fbbf24", width=2),
-                mode="lines+markers",
-                marker=dict(size=6, color="#fbbf24", symbol="diamond"),
+                    mode="lines+markers",
+                    line=dict(color="#fbbf24", width=2),
+                    marker=dict(size=6, color="#fbbf24", symbol="diamond"),
                     name="Place BSP",
                     hovertemplate="Place BSP: $%{y}<extra></extra>"
                 ))
