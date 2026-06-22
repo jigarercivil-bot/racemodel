@@ -129,7 +129,7 @@ def get_conn():
     if not token:
         st.error("⚠️ MOTHERDUCK_TOKEN not set.")
         st.stop()
-    conn = duckdb.connect("md:my_db", config={"motherduck_token": token})
+    conn = duckdb.connect(f"md:my_db?motherduck_token={token}", config={"custom_user_agent": "racemodel"})
     return conn
 
 @st.cache_data(ttl=120)
