@@ -388,17 +388,17 @@ with left_col:
             def color_num(val):
                 if pd.isna(val) or val == 0: return "color:#d1d5db"
                 return "color:#15803d;font-weight:700"
-            styled = styled.applymap(color_conf, subset=["Conf"])
-            styled = styled.applymap(color_num, subset=["6+","⚡","📉","✅"])
+            styled = styled.map(color_conf, subset=["Conf"])
+            styled = styled.map(color_num, subset=["6+","⚡","📉","✅"])
             return styled
 
         display_df = race_df.drop(columns=["_conf_col"])
         display_df = display_df.fillna("—")
         st.dataframe(
-            display_df.style.applymap(
+            display_df.style.map(
                 lambda v: "color:#15803d;font-weight:700" if v not in ["—", None] and str(v).replace(".","").isdigit() and float(str(v)) > 0 else "color:#9ca3af",
                 subset=["6+","⚡","📉","✅"]
-            ).applymap(
+            ).map(
                 lambda v: f"color:{'#15803d' if v=='High' else '#d97706' if v=='Medium' else '#dc2626' if v=='Low' else '#6b7280'};font-weight:700",
                 subset=["Conf"]
             ),
