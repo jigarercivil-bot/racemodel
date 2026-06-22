@@ -1,6 +1,6 @@
 """
 RACEMODEL — Daily Decision Dashboard (Streamlit)
-=================================================
+================================================
 Mirrors the MotherDuck Daily Decision Dashboard dive.
 Pulls from daily_candidates + steam_history.
 
@@ -129,7 +129,8 @@ def get_conn():
     if not token:
         st.error("⚠️ MOTHERDUCK_TOKEN not set.")
         st.stop()
-    return duckdb.connect(f"md:my_db?motherduck_token={token}")
+    conn = duckdb.connect("md:my_db", config={"motherduck_token": token})
+    return conn
 
 @st.cache_data(ttl=120)
 def q(_conn, sql):
