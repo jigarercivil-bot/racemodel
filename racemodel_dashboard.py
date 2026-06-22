@@ -1,6 +1,9 @@
 """
-RACEMODEL — Streamlit Dashboard
-================================
+RACEMODEL — Daily Decision Dashboard (Streamlit)
+================================================
+Mirrors the MotherDuck Daily Decision Dashboard dive.
+Pulls from daily_candidates + steam_history.
+
 Run locally:
     pip install streamlit duckdb==1.5.2 pandas plotly
     set MOTHERDUCK_TOKEN=your_token
@@ -16,888 +19,596 @@ import os
 import streamlit as st
 import duckdb
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
-from datetime import date, timedelta
+from datetime import date, datetime, timezone, timedelta
+import math
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="RACEMODEL",
+    page_title="RACEMODEL — Daily Decision",
     page_icon="🏇",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
+# ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap');
-    
-    html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
-    
-    .main { background: #0e0e14; }
-    
-    .metric-card {
-        background: #16161e;
-        border: 1px solid #2a2a38;
-        border-radius: 12px;
-        padding: 16px 20px;
-        margin-bottom: 12px;
-    }
-    .metric-label { font-size: 11px; color: #6b6b80; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
-    .metric-value { font-size: 28px; font-weight: 700; font-family: 'DM Mono', monospace; }
-    .metric-sub { font-size: 12px; color: #6b6b80; margin-top: 2px; }
-    
-    .green { color: #34d399; }
-    .red { color: #f87171; }
-    .yellow { color: #fbbf24; }
-    .blue { color: #60a5fa; }
-    
-    .verdict-bet { background: #0d2018; border: 1px solid #166534; border-radius: 6px; padding: 2px 8px; color: #34d399; font-size: 11px; font-weight: 600; }
-    .verdict-caution { background: #1c1700; border: 1px solid #854d0e; border-radius: 6px; padding: 2px 8px; color: #fbbf24; font-size: 11px; font-weight: 600; }
-    .verdict-skip { background: #1a0f0f; border: 1px solid #7f1d1d; border-radius: 6px; padding: 2px 8px; color: #f87171; font-size: 11px; font-weight: 600; }
-    
-    div[data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
-    
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] { 
-        background: #16161e; 
-        border-radius: 8px; 
-        border: 1px solid #2a2a38;
-        color: #9898b0;
-        font-size: 13px;
-    }
-    .stTabs [aria-selected="true"] { 
-        background: #1e1e2e !important; 
-        border-color: #60a5fa !important;
-        color: #60a5fa !important;
-    }
-    
-    /* Disable text selection on horse profile data */
-    .no-select {
-        -webkit-user-select: none;
-        -moz-user-select: none;
-        -ms-user-select: none;
-        user-select: none;
-    }
-    /* Disable selection on all dataframes in horse profile */
-    [data-testid="stDataFrame"] {
-        -webkit-user-select: none;
-        -moz-user-select: none;
-        user-select: none;
-    }
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@700;800&display=swap');
 
-    .search-result {
-        background: #16161e;
-        border: 1px solid #2a2a38;
-        border-radius: 10px;
-        padding: 16px;
-        margin-bottom: 10px;
-    }
+html, body, [class*="css"] {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #f9fafb;
+}
+.block-container { padding: 0 !important; }
+.stApp { background: #f9fafb; }
+
+/* Hide default streamlit chrome */
+#MainMenu, footer, header { visibility: hidden; }
+
+.rm-header {
+    background: #0777b3;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 0;
+}
+.rm-logo {
+    width: 36px; height: 36px;
+    background: #fff;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 900; color: #0777b3;
+    flex-shrink: 0;
+}
+.rm-title { font-size: 15px; font-weight: 800; color: #fff; }
+.rm-sub   { font-size: 10px; color: #bae6fd; }
+.rm-date  { font-size: 10px; color: #fde68a; margin-top: 2px; }
+
+.kpi-bar {
+    background: #fff;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8px 16px;
+}
+.kpi-card {
+    background: #fff;
+    border: 2px solid #111827;
+    border-radius: 8px;
+    padding: 8px 6px;
+    text-align: center;
+}
+.kpi-icon  { font-size: 15px; }
+.kpi-val   { font-size: 17px; font-weight: 800; color: #111827; line-height: 1.1; margin-top: 2px; }
+.kpi-label { font-size: 8px; color: #6b7280; margin-top: 2px; font-weight: 700; letter-spacing: 0.06em; }
+.kpi-sub   { font-size: 8px; color: #9ca3af; }
+
+.section-card {
+    background: #fff;
+    border: 2px solid #111827;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+.section-hdr {
+    font-size: 11px; font-weight: 700; color: #0777b3;
+    margin-bottom: 8px; letter-spacing: 0.08em;
+}
+
+.bet-badge   { background:#15803d; color:#fff; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; }
+.watch-badge { background:#d97706; color:#fff; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; }
+.avoid-badge { background:#dc2626; color:#fff; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; }
+
+.best-bet-card {
+    background: #f0fdf4;
+    border-radius: 6px;
+    padding: 7px 10px;
+    border-left: 3px solid #15803d;
+    margin-bottom: 8px;
+}
+.rule-card {
+    border-radius: 6px;
+    padding: 7px 10px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ── Connection ────────────────────────────────────────────────────────────────
+# ── Connection ─────────────────────────────────────────────────────────────────
 @st.cache_resource
-def get_connection():
-    try:
-        token = os.environ.get("MOTHERDUCK_TOKEN", "")
-        if not token:
-            try:
-                token = st.secrets["MOTHERDUCK_TOKEN"]
-            except:
-                pass
-        if not token:
-            st.error("⚠️ MOTHERDUCK_TOKEN not set. Add it in Streamlit Cloud → App settings → Secrets.")
-            st.stop()
-        conn = duckdb.connect(f"md:my_db?motherduck_token={token}", config={'custom_user_agent': 'racemodel'})
-        return conn
-    except Exception as e:
-        st.error(f"❌ Connection failed: {e}")
+def get_conn():
+    token = os.environ.get("MOTHERDUCK_TOKEN", "")
+    if not token:
+        try:
+            token = st.secrets["MOTHERDUCK_TOKEN"]
+        except:
+            pass
+    if not token:
+        st.error("⚠️ MOTHERDUCK_TOKEN not set.")
         st.stop()
+    return duckdb.connect(f"md:my_db?motherduck_token={token}")
 
-@st.cache_data(ttl=300)
-def query(_conn, sql):
+@st.cache_data(ttl=120)
+def q(_conn, sql):
     try:
         return _conn.execute(sql).df()
     except Exception as e:
         st.warning(f"Query error: {e}")
-        import pandas as pd
         return pd.DataFrame()
 
-conn = get_connection()
+conn = get_conn()
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("## 🏇 RACEMODEL")
-    st.markdown("---")
-    
-    page = st.radio("Navigation", [
-        "📊 Dashboard",
-        "🏇 Selections",
-        "🐴 Horse Profile",
-        "📁 Raw Data"
-    ])
-    
-    st.markdown("---")
-    st.markdown(f"<div style='font-size:11px;color:#6b6b80'>Today: {date.today()}</div>", unsafe_allow_html=True)
+# ── Decision logic (mirrors dive) ──────────────────────────────────────────────
+def get_decision(score, curr_odds, steam_pct, field_size):
+    steam = steam_pct is not None and steam_pct >= 25
+    drift = steam_pct is not None and steam_pct <= -25
+    if drift or curr_odds > 8 or curr_odds < 3:
+        return "AVOID"
+    if score >= 6 and steam and curr_odds <= 8 and field_size < 13:
+        return "BET"
+    if score >= 6:
+        return "WATCH"
+    if score >= 5 and steam:
+        return "WATCH"
+    return "AVOID"
+
+def get_reason(dec, score, steam_pct, curr_odds, field_size):
+    if dec == "BET":
+        return "Score ≥6 + steam ≥25% + odds $3–$8 + field <13"
+    if dec == "AVOID" and steam_pct is not None and steam_pct <= -25:
+        return f"Drift {steam_pct:.0f}% — market rejecting"
+    if dec == "AVOID" and curr_odds > 8:
+        return "Odds > $8 — outside range"
+    if dec == "AVOID" and curr_odds < 3:
+        return "Odds < $3 — too short"
+    if dec == "WATCH" and score >= 6 and field_size >= 13:
+        return f"Score ok but big field ({field_size})"
+    if dec == "WATCH" and steam_pct is not None and steam_pct >= 10:
+        return f"Moderate steam {steam_pct:.0f}% — monitor"
+    if dec == "WATCH" and score >= 5:
+        return "Near-miss — score 5–6 with steam"
+    return "Watch — partial setup"
+
+def get_move_label(pct):
+    if pct is None: return "—",       "#9ca3af"
+    if pct >= 25:   return "Steam",   "#15803d"
+    if pct >= 10:   return "Easing",  "#4ade80"
+    if pct >= -10:  return "Flat",    "#9ca3af"
+    if pct >= -25:  return "Drifting","#f97316"
+    return             "Drift",    "#dc2626"
+
+def get_confidence(score, steam_pct, field_size):
+    steam = steam_pct is not None and steam_pct >= 25
+    if score >= 8 and steam and field_size < 13: return "High",   "#15803d"
+    if score >= 7 and steam:                     return "Medium", "#d97706"
+    if score >= 6:                               return "Low",    "#dc2626"
+    return                                           "Skip",   "#6b7280"
+
+# ── Date selector ──────────────────────────────────────────────────────────────
+dates_df = q(conn, """
+    SELECT DISTINCT race_date::VARCHAR as d
+    FROM daily_candidates
+    ORDER BY race_date DESC LIMIT 60
+""")
+dates = dates_df["d"].tolist() if not dates_df.empty else []
+
+# ── Header ─────────────────────────────────────────────────────────────────────
+col_logo, col_title, col_filters = st.columns([1, 4, 5])
+
+with col_logo:
+    st.markdown("""
+    <div style='background:#0777b3;padding:12px 8px;border-radius:0'>
+      <div style='width:36px;height:36px;background:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900;color:#0777b3;margin:auto'>R</div>
+    </div>""", unsafe_allow_html=True)
+
+with col_title:
+    st.markdown("""
+    <div style='background:#0777b3;padding:12px 8px'>
+      <div style='font-size:15px;font-weight:800;color:#fff'>RACEMODEL — DAILY DECISION DASHBOARD</div>
+      <div style='font-size:10px;color:#bae6fd'>Actionable decisions — model, signals & price aligned.</div>
+    </div>""", unsafe_allow_html=True)
+
+with col_filters:
+    st.markdown("<div style='background:#0777b3;padding:6px 8px'>", unsafe_allow_html=True)
+    fc1, fc2, fc3, fc4 = st.columns(4)
+    with fc1:
+        sel_date = st.selectbox("Date", ["Latest"] + dates, label_visibility="collapsed")
+    active_date = dates[0] if (sel_date == "Latest" or not dates) else sel_date
+    date_sql = f"'{active_date}'" if active_date else "(NOW() AT TIME ZONE 'Australia/Brisbane')::DATE"
+    with fc2:
+        track_opt = st.selectbox("Track", ["All Tracks"], label_visibility="collapsed")
+    with fc3:
+        going_opt = st.selectbox("Going", ["All Going", "Good", "Soft", "Heavy", "Synth"], label_visibility="collapsed")
+    with fc4:
+        dec_filter = st.selectbox("Decision", ["All", "BET", "WATCH", "AVOID"], label_visibility="collapsed")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ── Build filters ──────────────────────────────────────────────────────────────
+track_where = f"AND dc.course = '{track_opt}'" if track_opt != "All Tracks" else ""
+going_where = f"AND dc.going = '{going_opt}'" if going_opt != "All Going" else ""
+
+# ── Main query (mirrors dive) ──────────────────────────────────────────────────
+data = q(conn, f"""
+    WITH steam_cte AS (
+        SELECT horse, course,
+            MIN(morning_odds) as morning_odds,
+            ROUND((MIN(morning_odds) - MIN(current_odds)) / NULLIF(MIN(morning_odds),0) * 100, 1) as steam_pct
+        FROM steam_history
+        WHERE race_date = {date_sql}
+        GROUP BY horse, course
+    )
+    SELECT dc.horse, dc.course, dc.race_number, dc.score, dc.odds,
+           COALESCE(dc.current_odds, dc.odds) as current_odds,
+           dc.field_size, dc.going, dc.finish_position, dc.place_result,
+           dc.s1_last_start as s1, dc.s2_form as s2, dc.s3_course_dist as s3,
+           dc.s4_bsp_ratio as s4, dc.s5_draw as s5, dc.s14_going as s14,
+           dc.s15_market as s15, dc.s18_place_rate as s18, dc.s19_dist_form as s19,
+           dc.brain_check, dc.brain_check_reason,
+           sh.morning_odds, sh.steam_pct
+    FROM daily_candidates dc
+    LEFT JOIN steam_cte sh
+        ON LOWER(TRIM(dc.horse)) = LOWER(TRIM(sh.horse))
+        AND LOWER(TRIM(dc.course)) = LOWER(TRIM(sh.course))
+    WHERE dc.race_date = {date_sql}
+    {track_where} {going_where}
+    AND (
+        (dc.score >= 6 AND COALESCE(dc.current_odds, dc.odds) BETWEEN 2.5 AND 10)
+        OR (dc.score >= 5 AND sh.steam_pct >= 25 AND COALESCE(dc.current_odds, dc.odds) BETWEEN 3 AND 8)
+        OR (dc.score >= 5.5 AND COALESCE(dc.current_odds, dc.odds) BETWEEN 3 AND 10)
+    )
+    ORDER BY dc.score DESC
+""")
+
+# ── Enrich data ────────────────────────────────────────────────────────────────
+if not data.empty:
+    data["steam_pct"]   = pd.to_numeric(data["steam_pct"], errors="coerce")
+    data["score"]       = pd.to_numeric(data["score"], errors="coerce").fillna(0)
+    data["current_odds"]= pd.to_numeric(data["current_odds"], errors="coerce").fillna(0)
+    data["field_size"]  = pd.to_numeric(data["field_size"], errors="coerce").fillna(0)
+
+    data["decision"]    = data.apply(lambda r: get_decision(r.score, r.current_odds, r.steam_pct if pd.notna(r.steam_pct) else None, r.field_size), axis=1)
+    data["reason"]      = data.apply(lambda r: get_reason(r.decision, r.score, r.steam_pct if pd.notna(r.steam_pct) else None, r.current_odds, r.field_size), axis=1)
+    data["move_label"]  = data["steam_pct"].apply(lambda x: get_move_label(x if pd.notna(x) else None)[0])
+    data["move_color"]  = data["steam_pct"].apply(lambda x: get_move_label(x if pd.notna(x) else None)[1])
+    data["conf_label"]  = data.apply(lambda r: get_confidence(r.score, r.steam_pct if pd.notna(r.steam_pct) else None, r.field_size)[0], axis=1)
+    data["conf_color"]  = data.apply(lambda r: get_confidence(r.score, r.steam_pct if pd.notna(r.steam_pct) else None, r.field_size)[1], axis=1)
+
+    # Top 3 positive signals
+    sig_cols = {"s1":"S1","s2":"S2","s3":"S3","s4":"S4","s5":"S5","s14":"S14","s15":"S15","s18":"S18","s19":"S19"}
+    def top_sigs(row):
+        hits = [(lbl, row[col]) for col, lbl in sig_cols.items() if pd.notna(row.get(col)) and row.get(col, 0) > 0]
+        hits.sort(key=lambda x: x[1], reverse=True)
+        return ", ".join(h[0] for h in hits[:3]) or "—"
+    data["top_sigs"] = data.apply(top_sigs, axis=1)
+
+    # Apply decision filter
+    if dec_filter != "All":
+        view = data[data["decision"] == dec_filter]
+    else:
+        view = data
+else:
+    view = pd.DataFrame()
+
+# ── KPI calculations ───────────────────────────────────────────────────────────
+bet_count   = len(data[data["decision"] == "BET"])   if not data.empty else 0
+watch_count = len(data[data["decision"] == "WATCH"]) if not data.empty else 0
+avoid_count = len(data[data["decision"] == "AVOID"]) if not data.empty else 0
+total_q     = len(data)
+
+race_groups = data.groupby(["course","race_number"]) if not data.empty else {}
+race_count  = data[["course","race_number"]].drop_duplicates().shape[0] if not data.empty else 0
+no_bet_races= 0
+if not data.empty:
+    for (c,r), grp in data.groupby(["course","race_number"]):
+        if not any(grp["decision"].isin(["BET","WATCH"])):
+            no_bet_races += 1
+
+avg_score = round(data["score"].mean(), 2) if not data.empty else 0
+steam_vals = data["steam_pct"].dropna() if not data.empty else pd.Series()
+avg_move  = round(steam_vals.mean(), 1) if len(steam_vals) > 0 else None
+odds_vals = data["current_odds"][data["current_odds"] > 0] if not data.empty else pd.Series()
+avg_odds  = round(odds_vals.mean(), 2) if len(odds_vals) > 0 else 0
+
+gauge_angle = max(-90, min(90, (avg_move or 0) * 3))
+gauge_color = "#9ca3af" if avg_move is None else "#15803d" if avg_move >= 20 else "#d97706" if avg_move >= 0 else "#dc2626"
+gauge_label = "Neutral" if avg_move is None else "Strong Steam" if avg_move >= 20 else "Easing Up" if avg_move >= 10 else "Flat" if avg_move >= 0 else "Drifting" if avg_move >= -25 else "Strong Drift"
+
+best_bet = data[data["decision"] == "BET"].sort_values("score", ascending=False).head(1) if not data.empty else pd.DataFrame()
+
+# ── KPI Bar ────────────────────────────────────────────────────────────────────
+st.markdown("<div style='padding: 8px 16px; background:#fff; border-bottom:1px solid #e5e7eb'>", unsafe_allow_html=True)
+k1,k2,k3,k4,k5,k6,k7,k8,k9 = st.columns(9)
+
+def kpi_card(icon, label, val, sub, color="#111827"):
+    return f"""
+    <div class='kpi-card'>
+      <div class='kpi-icon'>{icon}</div>
+      <div class='kpi-val' style='color:{color}'>{val}</div>
+      <div class='kpi-label'>{label}</div>
+      <div class='kpi-sub'>{sub}</div>
+    </div>"""
+
+move_str = f"{'+' if (avg_move or 0) >= 0 else ''}{avg_move:.1f}%" if avg_move is not None else "—"
+move_col = "#15803d" if (avg_move or 0) >= 0 else "#dc2626"
+
+k1.markdown(kpi_card("🏁","RACES",       race_count,         "Today"),          unsafe_allow_html=True)
+k2.markdown(kpi_card("⭐","CANDIDATES",  total_q,            "Actionable",      "#d97706"), unsafe_allow_html=True)
+k3.markdown(kpi_card("✅","BET",         bet_count,          "Clean pass",      "#15803d"), unsafe_allow_html=True)
+k4.markdown(kpi_card("👁️","WATCH",       watch_count,        "Monitor",         "#d97706"), unsafe_allow_html=True)
+k5.markdown(kpi_card("❌","AVOID",       avoid_count,        "Skip",            "#dc2626"), unsafe_allow_html=True)
+k6.markdown(kpi_card("🚫","NO BET RACES",no_bet_races,       "Skip races",      "#6b7280"), unsafe_allow_html=True)
+k7.markdown(kpi_card("📈","AVG SCORE",   avg_score,          "Qualifiers"),                  unsafe_allow_html=True)
+k8.markdown(kpi_card("📊","AVG MOVE",    move_str,           "All runners",     move_col),  unsafe_allow_html=True)
+k9.markdown(kpi_card("💰","AVG ODDS",    f"${avg_odds}",     "All runners",     "#d97706"), unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ── Date display ───────────────────────────────────────────────────────────────
+if active_date:
+    st.markdown(f"<div style='padding:4px 16px;background:#0f172a;font-size:10px;color:#fde68a'>📅 {active_date}</div>", unsafe_allow_html=True)
+
+# ── Main content ───────────────────────────────────────────────────────────────
+st.markdown("<div style='padding:10px 16px'>", unsafe_allow_html=True)
+left_col, right_col = st.columns([3, 1])
+
+with left_col:
+
+    # ── Race Confidence Overview ───────────────────────────────────────────────
+    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-hdr'>RACE CONFIDENCE OVERVIEW</div>", unsafe_allow_html=True)
+
+    if not data.empty:
+        race_rows = []
+        for (course, rnum), grp in data.groupby(["course","race_number"]):
+            best = grp.sort_values("score", ascending=False).iloc[0]
+            conf_lbl, conf_col = get_confidence(best.score, best.steam_pct if pd.notna(best.steam_pct) else None, best.field_size)
+            race_rows.append({
+                "R#":     f"R{rnum}",
+                "Track":  course,
+                "Fld":    int(best.field_size),
+                "6+":     int((grp["score"] >= 6).sum()) or None,
+                "⚡":     int((grp["steam_pct"] >= 25).sum()) if grp["steam_pct"].notna().any() else None,
+                "📉":     int((grp["steam_pct"] <= -25).sum()) if grp["steam_pct"].notna().any() else None,
+                "✅":     int((grp["decision"] == "BET").sum()) or None,
+                "Conf":   conf_lbl,
+                "_conf_col": conf_col,
+            })
+
+        race_df = pd.DataFrame(race_rows)
+
+        def style_race_table(df):
+            conf_map = {"High":"#15803d","Medium":"#d97706","Low":"#dc2626","Skip":"#6b7280"}
+            styled = df.drop(columns=["_conf_col"]).style
+            def color_conf(val):
+                c = conf_map.get(val, "#6b7280")
+                return f"color:{c};font-weight:700"
+            def color_num(val):
+                if pd.isna(val) or val == 0: return "color:#d1d5db"
+                return "color:#15803d;font-weight:700"
+            styled = styled.applymap(color_conf, subset=["Conf"])
+            styled = styled.applymap(color_num, subset=["6+","⚡","📉","✅"])
+            return styled
+
+        display_df = race_df.drop(columns=["_conf_col"])
+        display_df = display_df.fillna("—")
+        st.dataframe(
+            display_df.style.applymap(
+                lambda v: "color:#15803d;font-weight:700" if v not in ["—", None] and str(v).replace(".","").isdigit() and float(str(v)) > 0 else "color:#9ca3af",
+                subset=["6+","⚡","📉","✅"]
+            ).applymap(
+                lambda v: f"color:{'#15803d' if v=='High' else '#d97706' if v=='Medium' else '#dc2626' if v=='Low' else '#6b7280'};font-weight:700",
+                subset=["Conf"]
+            ),
+            use_container_width=True,
+            hide_index=True,
+            height=min(400, 36 + len(race_df) * 35)
+        )
+    else:
+        st.info("No race data for selected date")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Candidates Table ───────────────────────────────────────────────────────
+    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+
+    dec_cols = st.columns([4, 1, 1, 1, 1])
+    with dec_cols[0]:
+        st.markdown("<div class='section-hdr' style='margin-bottom:0'>TODAY'S CANDIDATES</div>", unsafe_allow_html=True)
+    with dec_cols[1]:
+        if st.button(f"All ({total_q})", key="f_all", type="secondary" if dec_filter != "All" else "primary"):
+            st.query_params["dec"] = "All"
+    with dec_cols[2]:
+        if st.button(f"✅ BET ({bet_count})", key="f_bet"):
+            st.query_params["dec"] = "BET"
+    with dec_cols[3]:
+        if st.button(f"👁 WATCH ({watch_count})", key="f_watch"):
+            st.query_params["dec"] = "WATCH"
+    with dec_cols[4]:
+        if st.button(f"❌ AVOID ({avoid_count})", key="f_avoid"):
+            st.query_params["dec"] = "AVOID"
+
+    if not view.empty:
+        dec_colors = {"BET":"#15803d","WATCH":"#d97706","AVOID":"#dc2626"}
+
+        display_cols = {
+            "horse":        "Horse",
+            "race_number":  "R#",
+            "course":       "Track",
+            "score":        "Score",
+            "current_odds": "Odds",
+            "morning_odds": "Morn",
+            "steam_pct":    "Move%",
+            "move_label":   "Move",
+            "field_size":   "Field",
+            "top_sigs":     "Signals",
+            "decision":     "Decision",
+            "brain_check":  "Brain ✓",
+            "reason":       "Reason",
+            "finish_position": "Pos",
+        }
+
+        tbl = view[list(display_cols.keys())].copy()
+        tbl.columns = list(display_cols.values())
+        tbl["Score"]   = tbl["Score"].round(2)
+        tbl["Odds"]    = tbl["Odds"].apply(lambda x: f"${x:.2f}" if pd.notna(x) and x > 0 else "—")
+        tbl["Morn"]    = tbl["Morn"].apply(lambda x: f"${x:.2f}" if pd.notna(x) and x > 0 else "—")
+        tbl["Move%"]   = tbl["Move%"].apply(lambda x: f"{x:+.1f}%" if pd.notna(x) else "—")
+        tbl["Field"]   = tbl["Field"].apply(lambda x: int(x) if pd.notna(x) else "—")
+        tbl["Pos"]     = tbl["Pos"].apply(lambda x: int(x) if pd.notna(x) else "—")
+        tbl["Brain ✓"] = tbl["Brain ✓"].fillna("—")
+
+        def style_table(df):
+            styles = pd.DataFrame("", index=df.index, columns=df.columns)
+            for i, row in df.iterrows():
+                dec = row["Decision"]
+                c = dec_colors.get(dec, "#6b7280")
+                styles.at[i, "Decision"] = f"background:{c};color:#fff;font-weight:700;border-radius:4px;padding:2px 8px"
+                bc = row.get("Brain ✓","—")
+                if bc == "BET":
+                    styles.at[i, "Brain ✓"] = "color:#15803d;font-weight:700"
+                elif bc == "CAUTION":
+                    styles.at[i, "Brain ✓"] = "color:#d97706;font-weight:700"
+                elif bc == "SKIP":
+                    styles.at[i, "Brain ✓"] = "color:#dc2626;font-weight:700"
+            return styles
+
+        st.dataframe(
+            tbl.style.apply(style_table, axis=None),
+            use_container_width=True,
+            hide_index=True,
+            height=min(600, 36 + len(tbl) * 35)
+        )
+        st.markdown(
+            "<div style='font-size:9px;color:#9ca3af;margin-top:4px'>"
+            "BET = Score≥6 + Odds $3–$8 + Steam≥25% + Field&lt;13 ▪ "
+            "WATCH = score/steam partial ▪ AVOID = drift≥25% or odds outside range"
+            "</div>",
+            unsafe_allow_html=True
+        )
+    else:
+        st.info("No candidates match current filters")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ══════════════════════════════════════════════════════════════════
-# PAGE 1 — DASHBOARD
-# ══════════════════════════════════════════════════════════════════
-if page == "📊 Dashboard":
+with right_col:
 
-    # ── Fetch all data ────────────────────────────────────────────────────────
-    perf = query(conn, """
-        SELECT COUNT(*) as total, SUM(place_result) as placed,
-               SUM(win_result) as winners,
-               ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as place_pct,
-               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl,
-               ROUND(AVG(clv),1) as avg_clv,
-               ROUND(AVG(odds),2) as avg_odds
-        FROM daily_selections WHERE result_loaded=TRUE
-    """)
+    # ── Decision Rules ─────────────────────────────────────────────────────────
+    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-hdr'>DECISION RULES</div>", unsafe_allow_html=True)
+    for icon, color, title, desc in [
+        ("✅","#15803d","BET",  "Score≥6 + Odds $3–$8 + Steam≥25% + Field<13"),
+        ("👁️","#d97706","WATCH","Score≥6 partial, or score 5–6 + steam≥25%"),
+        ("❌","#dc2626","AVOID","Drift≥25% or odds outside $3–$8"),
+    ]:
+        st.markdown(f"""
+        <div style='background:{color}08;border-left:3px solid {color};border-radius:6px;
+             padding:7px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:flex-start'>
+          <span style='font-size:14px;flex-shrink:0'>{icon}</span>
+          <div>
+            <div style='font-weight:700;color:{color};font-size:10px'>{title}</div>
+            <div style='font-size:9px;color:#6b7280;margin-top:1px'>{desc}</div>
+          </div>
+        </div>""", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    pnl_data = query(conn, """
-        SELECT race_date,
-               ROUND(SUM(SUM(COALESCE(profit_loss,0))) OVER (ORDER BY race_date),2) as cum_pnl,
-               COUNT(*) as bets,
-               ROUND(SUM(place_result)*100.0/COUNT(*),1) as strike
-        FROM daily_selections WHERE result_loaded=TRUE
-        GROUP BY race_date ORDER BY race_date
-    """)
+    # ── Market Momentum Gauge ──────────────────────────────────────────────────
+    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-hdr'>MARKET MOMENTUM</div>", unsafe_allow_html=True)
 
-    tier_data = query(conn, """
-        SELECT confidence_tier as tier, COUNT(*) as bets,
-               ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
-               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
-        FROM daily_selections WHERE result_loaded=TRUE AND confidence_tier IS NOT NULL
-        GROUP BY 1 ORDER BY CASE confidence_tier WHEN 'ELITE' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END
-    """)
+    angle_rad = (gauge_angle - 90) * math.pi / 180
+    needle_x2 = 90 + 52 * math.cos(angle_rad)
+    needle_y2 = 90 + 52 * math.sin(angle_rad)
 
-    bc_data = query(conn, """
-        SELECT brain_check as verdict, COUNT(*) as bets,
-               ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
-               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
-        FROM daily_selections WHERE result_loaded=TRUE AND brain_check IS NOT NULL
-        GROUP BY 1 ORDER BY 1
-    """)
+    gauge_svg = f"""
+    <div style='text-align:center'>
+    <svg width='180' height='110' viewBox='0 0 180 110'>
+      <path d='M 20 90 A 70 70 0 0 1 160 90' fill='none' stroke='#f3f4f6' stroke-width='14' stroke-linecap='round'/>
+      <path d='M 20 90 A 70 70 0 0 1 55 28'  fill='none' stroke='#fecaca' stroke-width='14' stroke-linecap='round'/>
+      <path d='M 55 28 A 70 70 0 0 1 125 28' fill='none' stroke='#fef3c7' stroke-width='14' stroke-linecap='round'/>
+      <path d='M 125 28 A 70 70 0 0 1 160 90' fill='none' stroke='#dcfce7' stroke-width='14' stroke-linecap='round'/>
+      <line x1='90' y1='90' x2='{needle_x2:.1f}' y2='{needle_y2:.1f}' stroke='#111827' stroke-width='2.5' stroke-linecap='round'/>
+      <circle cx='90' cy='90' r='4' fill='#111827'/>
+      <text x='14' y='96' font-size='8' fill='#dc2626' font-weight='700'>Drift</text>
+      <text x='145' y='96' font-size='8' fill='#15803d' font-weight='700'>Steam</text>
+    </svg>
+    <div style='font-size:22px;font-weight:800;color:{gauge_color};margin-top:-8px'>{move_str}</div>
+    <div style='font-size:10px;color:{gauge_color};font-weight:600;margin-top:2px'>{gauge_label}</div>
+    </div>"""
+    st.markdown(gauge_svg, unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    sig_data = query(conn, """
-        SELECT 'S1' as sig, ROUND(AVG(CASE WHEN s1_last_start>0 THEN place_result END)*100,1) as pct, SUM(CASE WHEN s1_last_start>0 THEN 1 ELSE 0 END) as fired FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S2', ROUND(AVG(CASE WHEN s2_form>0 THEN place_result END)*100,1), SUM(CASE WHEN s2_form>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S3', ROUND(AVG(CASE WHEN s3_course_dist>0 THEN place_result END)*100,1), SUM(CASE WHEN s3_course_dist>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S4', ROUND(AVG(CASE WHEN s4_bsp_ratio>0 THEN place_result END)*100,1), SUM(CASE WHEN s4_bsp_ratio>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S12', ROUND(AVG(CASE WHEN s12_race_shape>0 THEN place_result END)*100,1), SUM(CASE WHEN s12_race_shape>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S14', ROUND(AVG(CASE WHEN s14_going>0 THEN place_result END)*100,1), SUM(CASE WHEN s14_going>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S18', ROUND(AVG(CASE WHEN s18_place_rate>0 THEN place_result END)*100,1), SUM(CASE WHEN s18_place_rate>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        UNION ALL SELECT 'S19', ROUND(AVG(CASE WHEN s19_dist_form>0 THEN place_result END)*100,1), SUM(CASE WHEN s19_dist_form>0 THEN 1 ELSE 0 END) FROM daily_selections WHERE result_loaded=TRUE
-        ORDER BY pct DESC NULLS LAST
-    """)
+    # ── Today's Summary ────────────────────────────────────────────────────────
+    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-hdr'>TODAY'S SUMMARY</div>", unsafe_allow_html=True)
 
-    venue_data = query(conn, """
-        SELECT course as venue, COUNT(*) as bets,
-               ROUND(SUM(place_result)*100.0/NULLIF(COUNT(*),0),1) as strike,
-               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
-        FROM daily_selections WHERE result_loaded=TRUE
-        GROUP BY course HAVING COUNT(*)>=3
-        ORDER BY pnl DESC LIMIT 8
-    """)
+    if not best_bet.empty:
+        bb = best_bet.iloc[0]
+        st.markdown(f"""
+        <div class='best-bet-card'>
+          <div style='font-size:9px;color:#15803d;font-weight:700'>⭐ Best Bet</div>
+          <div style='font-size:10px;font-weight:700;margin-top:2px'>{bb['horse']}</div>
+          <div style='font-size:9px;color:#6b7280'>R{bb['race_number']} {bb['course']} · Score {bb['score']:.2f} · ${bb['current_odds']:.2f}</div>
+        </div>""", unsafe_allow_html=True)
 
-    daily = query(conn, """
-        SELECT race_date as date, COUNT(*) as bets,
-               ROUND(SUM(place_result)*100.0/COUNT(*),1) as strike,
-               ROUND(SUM(COALESCE(profit_loss,0)),2) as pnl
-        FROM daily_selections WHERE result_loaded=TRUE
-        GROUP BY race_date ORDER BY race_date DESC LIMIT 14
-    """)
-
-    # ── Extract values ────────────────────────────────────────────────────────
-    p = perf.iloc[0] if not perf.empty else None
-    total = int(p.total or 0) if p is not None else 0
-    placed = int(p.placed or 0) if p is not None else 0
-    winners = int(p.winners or 0) if p is not None else 0
-    place_pct = float(p.place_pct or 0) if p is not None else 0
-    pnl_total = float(p.pnl or 0) if p is not None else 0
-    avg_clv = float(p.avg_clv or 0) if p is not None else 0
-    avg_odds = float(p.avg_odds or 0) if p is not None else 0
-    latest_cum = float(pnl_data["cum_pnl"].iloc[-1]) if not pnl_data.empty else 0
-
-    pnl_color = "#10b981" if pnl_total >= 0 else "#ef4444"
-    pnl_arrow = "▲" if pnl_total >= 0 else "▼"
-
-    # ── Header banner ─────────────────────────────────────────────────────────
     st.markdown(f"""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+    <div style='background:#f9fafb;border-radius:6px;padding:7px 10px;border-left:3px solid {gauge_color};margin-bottom:8px'>
+      <div style='font-size:9px;color:{gauge_color};font-weight:700'>📊 Market</div>
+      <div style='font-size:10px;font-weight:700;margin-top:1px'>{gauge_label} · {move_str}</div>
+    </div>""", unsafe_allow_html=True)
 
-    .rm-header {{
-        background: linear-gradient(135deg, #0a0a12 0%, #0f1729 50%, #0a0a12 100%);
-        border: 1px solid #1e3a5f;
-        border-radius: 16px;
-        padding: 28px 32px;
-        margin-bottom: 24px;
-        position: relative;
-        overflow: hidden;
-    }}
-    .rm-header::before {{
-        content: '';
-        position: absolute;
-        top: -50%;
-        right: -10%;
-        width: 400px;
-        height: 400px;
-        background: radial-gradient(circle, rgba(16,185,129,0.06) 0%, transparent 70%);
-        pointer-events: none;
-    }}
-    .rm-title {{
-        font-family: 'Syne', sans-serif;
-        font-size: 13px;
-        font-weight: 600;
-        letter-spacing: 0.25em;
-        color: #10b981;
-        text-transform: uppercase;
-        margin-bottom: 4px;
-    }}
-    .rm-subtitle {{
-        font-family: 'Syne', sans-serif;
-        font-size: 28px;
-        font-weight: 800;
-        color: #f0f0f8;
-        margin-bottom: 20px;
-    }}
-    .rm-kpi-row {{
-        display: flex;
-        gap: 32px;
-        flex-wrap: wrap;
-    }}
-    .rm-kpi {{
-        display: flex;
-        flex-direction: column;
-    }}
-    .rm-kpi-label {{
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 10px;
-        color: #6b7280;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        margin-bottom: 2px;
-    }}
-    .rm-kpi-value {{
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 22px;
-        font-weight: 500;
-        color: #f0f0f8;
-    }}
-    .rm-kpi-value.green {{ color: #10b981; }}
-    .rm-kpi-value.red {{ color: #ef4444; }}
+    # Donut chart
+    tot = max(bet_count + watch_count + avoid_count, 1)
+    fig_donut = go.Figure(go.Pie(
+        values=[bet_count, watch_count, avoid_count],
+        labels=["BET","WATCH","AVOID"],
+        hole=0.6,
+        marker_colors=["#15803d","#d97706","#dc2626"],
+        textinfo="none",
+        hovertemplate="%{label}: %{value}<extra></extra>"
+    ))
+    fig_donut.update_layout(
+        showlegend=False,
+        margin=dict(l=0,r=0,t=0,b=0),
+        height=120,
+        paper_bgcolor="rgba(0,0,0,0)",
+        annotations=[dict(
+            text=f"<b>{tot}</b>",
+            x=0.5, y=0.5, font_size=18, showarrow=False, font_color="#111827"
+        )]
+    )
+    st.plotly_chart(fig_donut, use_container_width=True, config={"displayModeBar":False})
 
-    .rm-section {{
-        font-family: 'Syne', sans-serif;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
-        color: #4b5563;
-        margin: 20px 0 12px 0;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }}
-    .rm-section::after {{
-        content: '';
-        flex: 1;
-        height: 1px;
-        background: #1f2937;
-    }}
+    for color, label, n in [("#15803d","BET",bet_count),("#d97706","WATCH",watch_count),("#dc2626","AVOID",avoid_count)]:
+        pct = round(n/tot*100) if tot > 0 else 0
+        st.markdown(f"""
+        <div style='display:flex;align-items:center;gap:6px;font-size:9px;margin-bottom:3px'>
+          <div style='width:8px;height:8px;border-radius:2px;background:{color};flex-shrink:0'></div>
+          <span style='color:#6b7280'>{label} {n} ({pct}%)</span>
+        </div>""", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    .rm-bc-card {{
-        background: #0d1117;
-        border-radius: 12px;
-        padding: 16px 18px;
-        border: 1px solid #1f2937;
-        margin-bottom: 10px;
-        transition: border-color 0.2s;
-    }}
-    .rm-bc-card:hover {{ border-color: #374151; }}
-    .rm-bc-card.bet {{ border-left: 3px solid #10b981; }}
-    .rm-bc-card.caution {{ border-left: 3px solid #f59e0b; }}
-    .rm-bc-card.skip {{ border-left: 3px solid #ef4444; }}
-    .rm-bc-top {{
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 10px;
-    }}
-    .rm-bc-label {{ font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px; }}
-    .rm-bc-count {{ font-family: 'JetBrains Mono', monospace; font-size: 24px; font-weight: 500; color: #f0f0f8; }}
-    .rm-bc-stats {{
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
-        gap: 4px;
-    }}
-    .rm-bc-stat {{ text-align: center; }}
-    .rm-bc-stat-val {{ font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 500; }}
-    .rm-bc-stat-lbl {{ font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.08em; }}
-    </style>
+    # ── At a Glance ────────────────────────────────────────────────────────────
+    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-hdr'>AT A GLANCE</div>", unsafe_allow_html=True)
+    gl1, gl2, gl3 = st.columns(3)
+    glance = [
+        ("✅","Bet",         bet_count,   "#15803d"),
+        ("👁️","Watch",       watch_count, "#d97706"),
+        ("❌","Avoid",       avoid_count, "#dc2626"),
+        ("🚫","No Bet",     no_bet_races,"#6b7280"),
+        ("⭐","Candidates", total_q,      "#d97706"),
+        ("📈","Avg Score",  avg_score,    "#0777b3"),
+    ]
+    for i, (icon, label, val, color) in enumerate(glance):
+        col = [gl1, gl2, gl3][i % 3]
+        col.markdown(f"""
+        <div style='background:#f9fafb;border-radius:6px;padding:6px 8px;text-align:center;
+             border:1px solid #e5e7eb;margin-bottom:6px'>
+          <div style='font-size:14px'>{icon}</div>
+          <div style='font-size:15px;font-weight:800;color:{color};line-height:1.1'>{val}</div>
+          <div style='font-size:8px;color:#9ca3af;margin-top:2px'>{label}</div>
+        </div>""", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    <div class="rm-header">
-        <div class="rm-title">🏇 RACEMODEL v3</div>
-        <div class="rm-subtitle">Australian Thoroughbred Place Betting</div>
-        <div class="rm-kpi-row">
-            <div class="rm-kpi">
-                <div class="rm-kpi-label">Total Bets</div>
-                <div class="rm-kpi-value">{total}</div>
-            </div>
-            <div class="rm-kpi">
-                <div class="rm-kpi-label">Place Rate</div>
-                <div class="rm-kpi-value {'green' if place_pct >= 50 else 'red'}">{place_pct}%</div>
-            </div>
-            <div class="rm-kpi">
-                <div class="rm-kpi-label">Total P&L</div>
-                <div class="rm-kpi-value {'green' if pnl_total >= 0 else 'red'}">{pnl_arrow} {abs(pnl_total):.2f}u</div>
-            </div>
-            <div class="rm-kpi">
-                <div class="rm-kpi-label">Avg CLV</div>
-                <div class="rm-kpi-value {'green' if avg_clv >= 0 else 'red'}">{avg_clv:+.1f}%</div>
-            </div>
-            <div class="rm-kpi">
-                <div class="rm-kpi-label">Avg Odds</div>
-                <div class="rm-kpi-value">${avg_odds}</div>
-            </div>
-            <div class="rm-kpi">
-                <div class="rm-kpi-label">Winners</div>
-                <div class="rm-kpi-value">{winners}</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Row 1: P&L Chart + Tier breakdown ─────────────────────────────────────
-    st.markdown('<div class="rm-section">📈 Cumulative Performance</div>', unsafe_allow_html=True)
-    col1, col2 = st.columns([3, 1])
-
-    with col1:
-        if not pnl_data.empty:
-            fig = go.Figure()
-            # Area fill
-            fig.add_trace(go.Scatter(
-                x=pnl_data["race_date"], y=pnl_data["cum_pnl"],
-                mode="lines", line=dict(color="rgba(16,185,129,0)", width=0),
-                fill="tozeroy", fillcolor="rgba(16,185,129,0.06)",
-                showlegend=False, hoverinfo="skip"
-            ))
-            # Main line
-            fig.add_trace(go.Scatter(
-                x=pnl_data["race_date"], y=pnl_data["cum_pnl"],
-                mode="lines+markers",
-                line=dict(color="#10b981", width=2.5),
-                marker=dict(
-                    size=[10 if i == len(pnl_data)-1 else 5 for i in range(len(pnl_data))],
-                    color=["#10b981" if v >= 0 else "#ef4444" for v in pnl_data["cum_pnl"]],
-                    line=dict(color="#0d1117", width=2)
-                ),
-                customdata=pnl_data[["bets","strike"]].values,
-                hovertemplate="<b>%{x}</b><br>P&L: %{y:+.2f}u<br>Bets: %{customdata[0]}<br>Strike: %{customdata[1]}%<extra></extra>"
-            ))
-            fig.add_hline(y=0, line_dash="dot", line_color="#374151", opacity=0.8)
-            fig.update_layout(
-                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-                font=dict(color="#9ca3af", family="JetBrains Mono", size=10),
-                margin=dict(l=0,r=0,t=0,b=0), height=220,
-                xaxis=dict(gridcolor="#1f2937", showgrid=True, zeroline=False),
-                yaxis=dict(gridcolor="#1f2937", showgrid=True, zeroline=False, title="Units"),
-                showlegend=False,
-                hoverlabel=dict(bgcolor="#1f2937", bordercolor="#374151", font_color="#f0f0f8")
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-    with col2:
-        if not tier_data.empty:
-            for _, row in tier_data.iterrows():
-                emoji = "💎" if row.tier=="ELITE" else ("⭐" if row.tier=="MEDIUM" else "📌")
-                pnl_c = "#10b981" if (row.pnl or 0)>=0 else "#ef4444"
-                st.markdown(f"""
-                <div style="background:#0d1117;border:1px solid #1f2937;border-radius:10px;padding:12px;margin-bottom:8px">
-                <div style="font-family:'Syne',sans-serif;font-size:12px;font-weight:700;color:#f0f0f8;margin-bottom:8px">{emoji} {row.tier}</div>
-                <div style="display:flex;justify-content:space-between;font-size:10px;color:#9ca3af;font-family:'JetBrains Mono',monospace">
-                  <div><div style="font-size:14px;color:#f0f0f8;font-weight:500">{int(row.bets)}</div>bets</div>
-                  <div><div style="font-size:14px;color:#60a5fa;font-weight:500">{row.strike}%</div>strike</div>
-                  <div><div style="font-size:14px;color:{pnl_c};font-weight:500">{'+' if (row.pnl or 0)>=0 else ''}{row.pnl}u</div>p&l</div>
-                </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-    # ── Row 2: Signal radar + Claude Impact ───────────────────────────────────
-    st.markdown('<div class="rm-section">🎯 Signal Analysis & Brain Check</div>', unsafe_allow_html=True)
-    col3, col4 = st.columns([2, 1])
-
-    with col3:
-        if not sig_data.empty:
-            sig_clean = sig_data.dropna(subset=["pct"])
-            fig2 = go.Figure()
-            colors = ["#10b981" if v >= 55 else "#f59e0b" if v >= 45 else "#ef4444" for v in sig_clean["pct"]]
-            fig2.add_trace(go.Bar(
-                x=sig_clean["sig"], y=sig_clean["pct"],
-                marker_color=colors,
-                marker_line_width=0,
-                text=[f"{v:.0f}%" for v in sig_clean["pct"]],
-                textposition="outside",
-                textfont=dict(family="JetBrains Mono", size=11, color="#9ca3af"),
-                customdata=sig_clean["fired"].values,
-                hovertemplate="<b>%{x}</b><br>Strike: %{y:.1f}%<br>Fired: %{customdata}x<extra></extra>"
-            ))
-            fig2.add_hline(y=50, line_dash="dot", line_color="#374151", opacity=0.6,
-                          annotation_text="50%", annotation_font_color="#4b5563")
-            fig2.update_layout(
-                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-                font=dict(color="#9ca3af", family="JetBrains Mono", size=10),
-                margin=dict(l=0,r=0,t=20,b=0), height=220,
-                xaxis=dict(gridcolor="#1f2937", showgrid=False),
-                yaxis=dict(gridcolor="#1f2937", showgrid=True, range=[0,110], title="Place %"),
-                bargap=0.3,
-                hoverlabel=dict(bgcolor="#1f2937", bordercolor="#374151", font_color="#f0f0f8")
-            )
-            st.plotly_chart(fig2, use_container_width=True)
-
-    with col4:
-        if not bc_data.empty:
-            for _, row in bc_data.iterrows():
-                emoji = "✅" if row.verdict=="BET" else ("⚠️" if row.verdict=="CAUTION" else "❌")
-                card_class = row.verdict.lower()
-                pnl_c = "#10b981" if (row.pnl or 0)>=0 else "#ef4444"
-                border_c = "#10b981" if row.verdict=="BET" else "#f59e0b" if row.verdict=="CAUTION" else "#ef4444"
-                st.markdown(f"""
-                <div style="background:#0d1117;border:1px solid #1f2937;border-left:3px solid {border_c};border-radius:10px;padding:14px 16px;margin-bottom:8px">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                  <span style="font-family:'Syne',sans-serif;font-weight:700;font-size:12px;color:#f0f0f8">{emoji} {row.verdict}</span>
-                  <span style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:500;color:#f0f0f8">{int(row.bets)}</span>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-family:'JetBrains Mono',monospace;font-size:10px">
-                  <div style="color:#9ca3af">Strike<br><span style="font-size:14px;color:#60a5fa">{row.strike}%</span></div>
-                  <div style="color:#9ca3af">P&L<br><span style="font-size:14px;color:{pnl_c}">{'+' if (row.pnl or 0)>=0 else ''}{row.pnl}u</span></div>
-                </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-    # ── Row 3: Venues + Daily results ─────────────────────────────────────────
-    st.markdown('<div class="rm-section">🏟️ Venues & Daily Log</div>', unsafe_allow_html=True)
-    col5, col6 = st.columns([2, 3])
-
-    with col5:
-        if not venue_data.empty:
-            fig3 = go.Figure()
-            venue_colors = ["#10b981" if v>=0 else "#ef4444" for v in venue_data["pnl"]]
-            fig3.add_trace(go.Bar(
-                y=venue_data["venue"], x=venue_data["pnl"],
-                orientation="h",
-                marker_color=venue_colors,
-                marker_line_width=0,
-                text=[f"{'+' if v>=0 else ''}{v}u" for v in venue_data["pnl"]],
-                textposition="outside",
-                textfont=dict(family="JetBrains Mono", size=10, color="#9ca3af"),
-                customdata=venue_data[["bets","strike"]].values,
-                hovertemplate="<b>%{y}</b><br>P&L: %{x:+.2f}u<br>Bets: %{customdata[0]}<br>Strike: %{customdata[1]}%<extra></extra>"
-            ))
-            fig3.update_layout(
-                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-                font=dict(color="#9ca3af", family="JetBrains Mono", size=10),
-                margin=dict(l=0,r=60,t=0,b=0), height=280,
-                xaxis=dict(gridcolor="#1f2937", zeroline=True, zerolinecolor="#374151"),
-                yaxis=dict(gridcolor="#1f2937", showgrid=False),
-                hoverlabel=dict(bgcolor="#1f2937", bordercolor="#374151", font_color="#f0f0f8")
-            )
-            st.plotly_chart(fig3, use_container_width=True)
-
-    with col6:
-        if not daily.empty:
-            # Interactive daily table with color coding
-            fig4 = go.Figure(data=[go.Table(
-                columnwidth=[120, 60, 80, 80],
-                header=dict(
-                    values=["<b>Date</b>", "<b>Bets</b>", "<b>Strike</b>", "<b>P&L</b>"],
-                    fill_color="#161b22",
-                    font=dict(color="#9ca3af", family="JetBrains Mono", size=11),
-                    line_color="#30363d",
-                    align="left",
-                    height=32
-                ),
-                cells=dict(
-                    values=[
-                        daily["date"].astype(str).tolist(),
-                        daily["bets"].tolist(),
-                        [f"{v}%" for v in daily["strike"].tolist()],
-                        [f"{'+' if v>=0 else ''}{v}u" for v in daily["pnl"].tolist()]
-                    ],
-                    fill_color=[
-                        ["#0d1117"] * len(daily),
-                        ["#0d1117"] * len(daily),
-                        ["rgba(16,185,129,0.1)" if v>=50 else "rgba(239,68,68,0.1)" for v in daily["strike"].tolist()],
-                        ["rgba(16,185,129,0.1)" if v>=0 else "rgba(239,68,68,0.1)" for v in daily["pnl"].tolist()]
-                    ],
-                    font=dict(
-                        color=[
-                            ["#d1d5db"] * len(daily),
-                            ["#d1d5db"] * len(daily),
-                            ["#10b981" if v>=50 else "#ef4444" for v in daily["strike"].tolist()],
-                            ["#10b981" if v>=0 else "#ef4444" for v in daily["pnl"].tolist()]
-                        ],
-                        family="JetBrains Mono", size=11
-                    ),
-                    line_color="#1f2937",
-                    align="left",
-                    height=28
-                )
-            )])
-            fig4.update_layout(
-                paper_bgcolor="#0d1117",
-                margin=dict(l=0,r=0,t=0,b=0),
-                height=280
-            )
-            st.plotly_chart(fig4, use_container_width=True)
-
-
-elif page == "🏇 Selections":
-    st.markdown("## 🏇 Daily Selections")
-
-    # Hide today's unresulted selections until 7pm AEST (9am UTC)
-    from datetime import datetime, timezone, timedelta as td
-    aest_now = datetime.now(timezone.utc) + td(hours=10)
-    cutoff_hour = 19  # 7pm AEST
-    show_today = aest_now.hour >= cutoff_hour
-    max_date = date.today() if show_today else date.today() - timedelta(days=1)
-
-    if not show_today:
-        st.info(f"⏰ Today's selections visible after 7pm AEST ({cutoff_hour - aest_now.hour}hrs remaining). Showing completed results only.")
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        date_from = st.date_input("From", value=date.today() - timedelta(days=14))
-    with col2:
-        date_to = st.date_input("To", value=max_date)
-    with col3:
-        tier_filter = st.multiselect("Tier", ["ELITE","MEDIUM","LOW"], default=["ELITE","MEDIUM","LOW"])
-    with col4:
-        bc_filter = st.multiselect("Brain Check", ["BET","CAUTION","SKIP"], default=["BET","CAUTION","SKIP"])
-
-    tier_sql = "','".join(tier_filter) if tier_filter else "ELITE','MEDIUM','LOW"
-    bc_sql = "','".join(bc_filter) if bc_filter else "BET','CAUTION','SKIP"
-
-    # Only show result_loaded rows for today if before 7pm AEST
-    result_filter = "AND (race_date < CURRENT_DATE OR result_loaded = TRUE)" if not show_today else ""
-
-    df = query(conn, f"""
-        SELECT race_date, race_number as r, course, horse, score, odds,
-               confidence_tier as tier, going, field_size as field,
-               brain_check as verdict,
-               CASE 
-                   WHEN result_loaded = FALSE THEN '⏳ Pending'
-                   WHEN win_result = 1 THEN '🏆 WON'
-                   WHEN place_result = 1 THEN '✅ Placed'
-                   ELSE '❌ Unplaced'
-               END as outcome,
-               finish_position as pos,
-               ROUND(place_bsp,2) as place_bsp,
-               ROUND(profit_loss,2) as pnl,
-               ROUND(clv,1) as clv,
-               brain_check_reason as reason,
-               s1_last_start as s1, s2_form as s2, s3_course_dist as s3,
-               s4_bsp_ratio as s4, s5_draw as s5, s6_weight as s6,
-               s7_jockey as s7, s8_trainer as s8, s9_resuming as s9,
-               s12_race_shape as s12, s13_class as s13, s14_going as s14,
-               s15_market as s15, s16_rating as s16, s17_value as s17,
-               s18_place_rate as s18, s19_dist_form as s19,
-               signals_hit, steam_flag
-        FROM daily_selections
-        WHERE race_date BETWEEN '{date_from}' AND '{date_to}'
-        AND confidence_tier IN ('{tier_sql}')
-        {result_filter}
-        ORDER BY race_date DESC, score DESC
-    """)
-
-    if not df.empty:
-        # Filter by brain check
-        if bc_filter:
-            df = df[df['verdict'].isin(bc_filter)]
-
-        # Additional column filters
-        st.markdown("**Additional Filters**")
-        fcol1, fcol2, fcol3, fcol4, fcol5 = st.columns(5)
-
-        with fcol1:
-            outcome_filter = st.multiselect("Outcome", 
-                ["🏆 WON","✅ Placed","❌ Unplaced","⏳ Pending"],
-                default=["🏆 WON","✅ Placed","❌ Unplaced","⏳ Pending"],
-                key="outcome_f")
-            if outcome_filter:
-                df = df[df['outcome'].isin(outcome_filter)]
-
-        with fcol2:
-            if 'course' in df.columns:
-                venues = sorted(df['course'].dropna().unique().tolist())
-                venue_sel = st.multiselect("Venue", venues, default=venues, key="venue_f")
-                if venue_sel:
-                    df = df[df['course'].isin(venue_sel)]
-
-        with fcol3:
-            if 'going' in df.columns:
-                goings = sorted(df['going'].dropna().unique().tolist())
-                going_sel = st.multiselect("Going", goings, default=goings, key="going_f")
-                if going_sel:
-                    df = df[df['going'].isin(going_sel)]
-
-        with fcol4:
-            min_score = st.number_input("Min Score", min_value=0, max_value=25, value=0, key="score_f")
-            if min_score > 0:
-                df = df[df['score'] >= min_score]
-
-        with fcol5:
-            horse_search = st.text_input("Horse name", placeholder="Search...", key="horse_f")
-            if horse_search:
-                df = df[df['horse'].str.lower().str.contains(horse_search.lower(), na=False)]
-
-        st.markdown(f"**{len(df)} selections**")
-
-        # Export button
-        csv = df.to_csv(index=False)
-
-        st.dataframe(df, use_container_width=True, hide_index=True, height=600)
-    else:
-        st.info("No selections found for selected filters")
-
-
-# ══════════════════════════════════════════════════════════════════
-# PAGE 3 — STREAM DATA
-# ══════════════════════════════════════════════════════════════════
-elif page == "🐴 Horse Profile":
-    st.markdown("## 🐴 Horse Profile")
-
-    horse_input = st.text_input("Search horse name", placeholder="e.g. Presides")
-
-    if horse_input and len(horse_input) >= 2:
-        h = horse_input.replace("'", "")
-
-        # ── Key stats ─────────────────────────────────────────────────────────
-        bsp_stats = query(conn, f"""
-            SELECT COUNT(*) as runs,
-                   SUM(CASE WHEN WIN_RESULT='WINNER' THEN 1 ELSE 0 END) as wins,
-                   SUM(CASE WHEN PLACE_RESULT='WINNER' THEN 1 ELSE 0 END) as places,
-                   ROUND(SUM(CASE WHEN PLACE_RESULT='WINNER' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1) as place_pct,
-                   ROUND(AVG(WIN_BSP),2) as avg_win_bsp,
-                   ROUND(MIN(WIN_BSP),2) as best_bsp,
-                   ROUND(MAX(WIN_BSP),2) as worst_bsp
-            FROM anz_thoroughbreds
-            WHERE LOWER(REPLACE(SELECTION_NAME,chr(39),'')) LIKE LOWER('%{h}%')
-        """)
-
-        if not bsp_stats.empty and (bsp_stats["runs"][0] or 0) > 0:
-            st.markdown(f"### {horse_input}")
-            col1,col2,col3,col4,col5,col6,col7 = st.columns(7)
-            col1.metric("Total Runs", int(bsp_stats["runs"][0] or 0))
-            col2.metric("Wins", int(bsp_stats["wins"][0] or 0))
-            col3.metric("Places", int(bsp_stats["places"][0] or 0))
-            col4.metric("Place Rate", f"{float(bsp_stats['place_pct'][0] or 0)}%")
-            col5.metric("Avg Win BSP", f"${float(bsp_stats['avg_win_bsp'][0] or 0)}")
-            col6.metric("Best BSP", f"${float(bsp_stats['best_bsp'][0] or 0)}")
-            col7.metric("Worst BSP", f"${float(bsp_stats['worst_bsp'][0] or 0)}")
-        else:
-            st.markdown(f"### {horse_input}")
-            st.info("No BSP history found in anz_thoroughbreds")
-
-        st.markdown("---")
-
-        # ── Block 1: BSP History ──────────────────────────────────────────────
-        st.markdown("### 📊 BSP History")
-        bsp = query(conn, f"""
-            SELECT *
-            FROM anz_thoroughbreds
-            WHERE LOWER(REPLACE(SELECTION_NAME,chr(39),'')) LIKE LOWER('%{h}%')
-            ORDER BY LOCAL_MEETING_DATE DESC
-            LIMIT 50
-        """)
-        if not bsp.empty:
-            st.dataframe(bsp, use_container_width=True, hide_index=True, height=300)
-        else:
-            st.info("No BSP history found")
-
-        st.markdown("---")
-
-        # ── Block 2: Win BSP Over Time chart ─────────────────────────────────
-        st.markdown("### 📈 BSP Over Time (Win & Place)")
-        if not bsp.empty and len(bsp) > 1:
-            fig = go.Figure()
-            date_col = "LOCAL_MEETING_DATE" if "LOCAL_MEETING_DATE" in bsp.columns else "date"
-            win_col = "WIN_BSP" if "WIN_BSP" in bsp.columns else "win_bsp"
-            place_col = "PLACE_BSP" if "PLACE_BSP" in bsp.columns else "place_bsp"
-            result_col = "WIN_RESULT" if "WIN_RESULT" in bsp.columns else "result"
-            colors = ["#34d399" if r=="WINNER" else "#f87171" for r in bsp[result_col]]
-            fig.add_trace(go.Scatter(
-                x=bsp[date_col], y=bsp[win_col],
-                mode="lines+markers",
-                line=dict(color="#60a5fa", width=2),
-                marker=dict(size=10, color=colors,
-                    line=dict(color="#ffffff", width=1)),
-                hovertemplate="<b>%{x}</b><br>Win BSP: $%{y}<extra></extra>",
-                name="Win BSP"
-            ))
-            # Add place BSP line if available
-            if place_col in bsp.columns and bsp[place_col].notna().any():
-                fig.add_trace(go.Scatter(
-                    x=bsp[date_col], y=bsp[place_col],
-                    mode="lines+markers",
-                    line=dict(color="#fbbf24", width=2),
-                    marker=dict(size=6, color="#fbbf24", symbol="diamond"),
-                    name="Place BSP",
-                    hovertemplate="Place BSP: $%{y}<extra></extra>"
-                ))
-            fig.update_layout(
-                paper_bgcolor="#16161e", plot_bgcolor="#16161e",
-                showlegend=True,
-                legend=dict(bgcolor="#16161e", font=dict(color="#9898b0", size=11)),
-                font=dict(color="#9898b0"), height=250,
-                margin=dict(l=0,r=0,t=10,b=0),
-                xaxis=dict(gridcolor="#2a2a38"),
-                yaxis=dict(gridcolor="#2a2a38", title="BSP ($)"),
-                annotations=[dict(
-                    x=0.01, y=0.95, xref="paper", yref="paper",
-                    text="🟢 Win  🔴 Loss", showarrow=False,
-                    font=dict(color="#9898b0", size=11)
-                )]
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Not enough data for chart")
-
-        st.markdown("---")
-
-        # ── Block 3: Punting Form ─────────────────────────────────────────────
-        st.markdown("### 📝 Punting Form")
-
-        # Today + history combined
-        form = query(conn, f"""
-            SELECT *
-            FROM punting_form
-            WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
-            ORDER BY meeting_date DESC LIMIT 10
-        """)
-
-        if not form.empty:
-            # Show records summary if available
-            rec_query = query(conn, f"""
-                SELECT career_record, dist_record, track_record,
-                       track_dist_record, soft_record, heavy_record,
-                       first_up_record, second_up_record,
-                       horse_age, horse_sire, horse_dam
-                FROM punting_form_history
-                WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
-                ORDER BY meeting_date DESC LIMIT 1
-            """)
-            if not rec_query.empty:
-                r = rec_query.iloc[0]
-                col1,col2,col3,col4 = st.columns(4)
-                col1.metric("Career", r.get("career_record") or "—")
-                col2.metric("Dist", r.get("dist_record") or "—")
-                col3.metric("Soft", r.get("soft_record") or "—")
-                col4.metric("Heavy", r.get("heavy_record") or "—")
-                col1b,col2b,col3b,col4b = st.columns(4)
-                col1b.metric("Track", r.get("track_record") or "—")
-                col2b.metric("T+D", r.get("track_dist_record") or "—")
-                col3b.metric("1st up", r.get("first_up_record") or "—")
-                col4b.metric("2nd up", r.get("second_up_record") or "—")
-                st.markdown(f"**Age:** {r.get('horse_age') or '—'} | **Sire:** {r.get('horse_sire') or '—'} | **Dam:** {r.get('horse_dam') or '—'}")
-            st.markdown("**Today's form:**")
-            st.dataframe(form, use_container_width=True, hide_index=True, height=250)
-        else:
-            st.info("No punting form for today")
-
-        # Punting form history - all columns
-        pf_hist = query(conn, f"""
-            SELECT *
-            FROM punting_form_history
-            WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
-            ORDER BY meeting_date DESC LIMIT 50
-        """)
-        if not pf_hist.empty:
-            st.markdown("**Form history (Dropbox CSV):**")
-            st.dataframe(pf_hist, use_container_width=True, hide_index=True, height=300)
-        else:
-            st.info("No form history yet — grows daily via Dropbox")
-
-        st.markdown("---")
-
-        # ── Block 4: Stream Data ──────────────────────────────────────────────
-        st.markdown("### 📡 Stream Data")
-        stream = query(conn, f"""
-            SELECT *
-            FROM betfair_stream
-            WHERE LOWER(REPLACE(horse_name,chr(39),'')) LIKE LOWER('%{h}%')
-            ORDER BY meeting_date DESC
-            LIMIT 30
-        """)
-        if not stream.empty:
-            # Steam summary — use actual column name from SELECT *
-            steam_col = "steam_pct_10to_bsp" if "steam_pct_10to_bsp" in stream.columns else "steam_10"
-            if steam_col in stream.columns:
-                steamers = stream[stream[steam_col].notna() & (stream[steam_col] > 15)]
-                drifters = stream[stream[steam_col].notna() & (stream[steam_col] < -15)]
-            else:
-                steamers = drifters = stream.iloc[0:0]
-            col1,col2,col3 = st.columns(3)
-            col1.metric("Stream Runs", len(stream))
-            col2.metric("Steam >15%", len(steamers))
-            col3.metric("Drift >15%", len(drifters))
-            st.dataframe(stream, use_container_width=True, hide_index=True, height=300)
-        else:
-            st.info("No stream data found — load more months to expand coverage")
-
-    else:
-        st.markdown("### 👆 Enter a horse name above")
-        st.info("Search any horse to see all available data: BSP history, punting form, stream data and price chart — all in one place.")
-
-
-elif page == "📁 Raw Data":
-    st.markdown("## 📁 Raw Data")
-
-    table = st.selectbox("Table", [
-        "anz_thoroughbreds",
-        "betfair_stream",
-        "punting_form",
-        "punting_form_history"
-    ])
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        limit = st.number_input("Rows", min_value=10, max_value=10000, value=200, step=50)
-    with col2:
-        custom_sql = st.text_input("WHERE clause", placeholder="e.g. track='Kembla Grange'")
-    with col3:
-        search_horse = st.text_input("Search horse", placeholder="e.g. Presides")
-
-    filters = []
-    if custom_sql:
-        filters.append(custom_sql)
-    if search_horse:
-        if table == "anz_thoroughbreds":
-            filters.append(f"LOWER(SELECTION_NAME) LIKE LOWER('%{search_horse}%')")
-        elif table in ("punting_form","punting_form_history","betfair_stream"):
-            filters.append(f"LOWER(horse_name) LIKE LOWER('%{search_horse}%')")
-        else:
-            filters.append(f"LOWER(horse) LIKE LOWER('%{search_horse}%')")
-    where = f"WHERE {' AND '.join(filters)}" if filters else ""
-
-    if table == "anz_thoroughbreds":
-        order = "ORDER BY LOCAL_MEETING_DATE DESC"
-    else:
-        order = "ORDER BY 1 DESC"
-
-    df = query(conn, f"SELECT * FROM {table} {where} {order} LIMIT {limit}")
-
-    st.markdown(f"**{len(df)} rows** from `{table}`")
-    st.markdown(f"**{len(df)} rows** from `{table}`")
-    if not df.empty:
-        all_cols = list(df.columns)
-        show_cols = st.multiselect("Columns to display", all_cols, default=all_cols, key="raw_cols")
-        if show_cols:
-            df = df[show_cols]
-    st.dataframe(df, use_container_width=True, hide_index=True, height=600)
+st.markdown("</div>", unsafe_allow_html=True)
