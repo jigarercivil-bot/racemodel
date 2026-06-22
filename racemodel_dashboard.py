@@ -1,6 +1,6 @@
 """
 RACEMODEL — Daily Decision Dashboard (Streamlit)
-================================================
+=================================================
 Mirrors the MotherDuck Daily Decision Dashboard dive.
 Pulls from daily_candidates + steam_history.
 
