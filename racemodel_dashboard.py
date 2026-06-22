@@ -214,7 +214,7 @@ with col_title:
 
 with col_filters:
     st.markdown("<div style='background:#0777b3;padding:6px 8px'>", unsafe_allow_html=True)
-    fc1, fc2, fc3, fc4 = st.columns(4)
+    fc1, fc2, fc3 = st.columns(3)
     with fc1:
         sel_date = st.selectbox("Date", ["Latest"] + dates, label_visibility="collapsed")
     active_date = dates[0] if (sel_date == "Latest" or not dates) else sel_date
@@ -223,8 +223,6 @@ with col_filters:
         track_opt = st.selectbox("Track", ["All Tracks"], label_visibility="collapsed")
     with fc3:
         going_opt = st.selectbox("Going", ["All Going", "Good", "Soft", "Heavy", "Synth"], label_visibility="collapsed")
-    with fc4:
-        dec_filter = st.selectbox("Decision", ["All", "BET", "WATCH", "AVOID"], label_visibility="collapsed")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ── Build filters ──────────────────────────────────────────────────────────────
@@ -285,11 +283,6 @@ if not data.empty:
         return ", ".join(h[0] for h in hits[:3]) or "—"
     data["top_sigs"] = data.apply(top_sigs, axis=1)
 
-    # Apply decision filter
-    if dec_filter != "All":
-        view = data[data["decision"] == dec_filter]
-    else:
-        view = data
 else:
     view = pd.DataFrame()
 
@@ -413,21 +406,25 @@ with left_col:
     # ── Candidates Table ───────────────────────────────────────────────────────
     st.markdown("<div class='section-card'>", unsafe_allow_html=True)
 
-    dec_cols = st.columns([4, 1, 1, 1, 1])
-    with dec_cols[0]:
+    hdr_col, filter_col = st.columns([2, 3])
+    with hdr_col:
         st.markdown("<div class='section-hdr' style='margin-bottom:0'>TODAY'S CANDIDATES</div>", unsafe_allow_html=True)
-    with dec_cols[1]:
-        if st.button(f"All ({total_q})", key="f_all", type="secondary" if dec_filter != "All" else "primary"):
-            st.query_params["dec"] = "All"
-    with dec_cols[2]:
-        if st.button(f"✅ BET ({bet_count})", key="f_bet"):
-            st.query_params["dec"] = "BET"
-    with dec_cols[3]:
-        if st.button(f"👁 WATCH ({watch_count})", key="f_watch"):
-            st.query_params["dec"] = "WATCH"
-    with dec_cols[4]:
-        if st.button(f"❌ AVOID ({avoid_count})", key="f_avoid"):
-            st.query_params["dec"] = "AVOID"
+    with filter_col:
+        dec_filter_local = st.radio(
+            "Filter",
+            options=["All", f"✅ BET ({bet_count})", f"👁 WATCH ({watch_count})", f"❌ AVOID ({avoid_count})"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="dec_radio"
+        )
+    # Map radio label back to decision value
+    dec_map = {"All": "All", f"✅ BET ({bet_count})": "BET", f"👁 WATCH ({watch_count})": "WATCH", f"❌ AVOID ({avoid_count})": "AVOID"}
+    active_dec = dec_map.get(dec_filter_local, "All")
+
+    if not data.empty:
+        view = data if active_dec == "All" else data[data["decision"] == active_dec]
+    else:
+        view = pd.DataFrame()
 
     if not view.empty:
         dec_colors = {"BET":"#15803d","WATCH":"#d97706","AVOID":"#dc2626"}
