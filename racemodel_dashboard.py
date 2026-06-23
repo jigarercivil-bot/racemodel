@@ -429,7 +429,9 @@ with left_col:
         view = pd.DataFrame()
 
     if not view.empty:
-        dec_colors = {"BET":"#15803d","WATCH":"#d97706","AVOID":"#dc2626"}
+        # Map decision to emoji + text for visibility
+        dec_display = {"BET": "✅ BET", "WATCH": "👁 WATCH", "AVOID": "❌ AVOID"}
+        tbl["Decision"] = tbl["Decision"].map(lambda x: dec_display.get(x, x))
 
         display_cols = {
             "horse":        "Horse",
@@ -461,9 +463,13 @@ with left_col:
         def style_table(df):
             styles = pd.DataFrame("", index=df.index, columns=df.columns)
             for i, row in df.iterrows():
-                dec = row["Decision"]
-                c = dec_colors.get(dec, "#6b7280")
-                styles.at[i, "Decision"] = f"background:{c};color:#fff;font-weight:700;border-radius:4px;padding:2px 8px"
+                dec = str(row["Decision"])
+                if "BET" in dec:
+                    styles.at[i, "Decision"] = "color:#ffffff;background-color:#15803d;font-weight:700;border-radius:4px;padding:2px 6px"
+                elif "WATCH" in dec:
+                    styles.at[i, "Decision"] = "color:#ffffff;background-color:#d97706;font-weight:700;border-radius:4px;padding:2px 6px"
+                elif "AVOID" in dec:
+                    styles.at[i, "Decision"] = "color:#ffffff;background-color:#dc2626;font-weight:700;border-radius:4px;padding:2px 6px"
                 bc = row.get("Brain ✓","—")
                 if bc == "BET":
                     styles.at[i, "Brain ✓"] = "color:#15803d;font-weight:700"
