@@ -429,10 +429,6 @@ with left_col:
         view = pd.DataFrame()
 
     if not view.empty:
-        # Map decision to emoji + text for visibility
-        dec_display = {"BET": "✅ BET", "WATCH": "👁 WATCH", "AVOID": "❌ AVOID"}
-        tbl["Decision"] = tbl["Decision"].map(lambda x: dec_display.get(x, x))
-
         display_cols = {
             "horse":        "Horse",
             "race_number":  "R#",
@@ -459,6 +455,7 @@ with left_col:
         tbl["Field"]   = tbl["Field"].apply(lambda x: int(x) if pd.notna(x) else "—")
         tbl["Pos"]     = tbl["Pos"].apply(lambda x: int(x) if pd.notna(x) else "—")
         tbl["Brain ✓"] = tbl["Brain ✓"].fillna("—")
+        tbl["Decision"] = tbl["Decision"].map(lambda x: {"BET":"✅ BET","WATCH":"👁 WATCH","AVOID":"❌ AVOID"}.get(x, x))
 
         def style_table(df):
             styles = pd.DataFrame("", index=df.index, columns=df.columns)
